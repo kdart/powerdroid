@@ -1,0 +1,48 @@
+# python config
+# vim:ts=4:sw=4:softtabstop=0:smarttab:ft=python
+
+DEBUG = True
+
+# User to run web handler as. Main server must be run as root for this to have
+# any effect.
+USERNAME = "www-data"
+
+ADMINS = (
+    ('Keith Dart', 'dart@google.com'),
+)
+
+
+# DATABASE_ENGINE = 'sqlite3'           # 'postgresql', 'mysql', 'sqlite3' or 'ado_mssql'.
+# DATABASE_NAME = '/var/tmp/gtest.db'  # Or path to database file if using sqlite3.
+DATABASE_ENGINE = 'mysql'
+DATABASE_NAME = 'droid'
+
+DATABASE_USER = 'droid'
+# DATABASE_PASSWORD = 'c3po+r2d2'
+DATABASE_PASSWORD = 'sp1tfir3'
+DATABASE_HOST = 'psyche.corp.google.com'  # Set to empty string for localhost.
+DATABASE_PORT = ''             # Set to empty string for default.
+
+LANGUAGE_CODE = 'en-us'
+
+# Map pattern to handler functions.
+LOCATIONMAP = (
+  (r"^/?$", "droid.webui.views.main"),
+    # aliases don't have a dot in the name.
+  (r'/media/css/(?P<name>\S+)', "css"),
+  (r'/media/js/(?P<name>\S+)', "js"),
+  (r'/media/images/(?P<name>\S+)', "images"),
+)
+
+DEFAULTNAV = [
+    # location                name in menu
+  ("droid.webui.views.main", "Main"),
+]
+
+
+ICONMAP = {
+# simplename     active         inactive (base state)
+#"xxx": ("icon_xxx_active.png", "icon_xxx_inactive.png"),
+}
+
+

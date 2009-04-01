@@ -1,0 +1,4 @@
+include _gpibmodule.c
+recursive-include media *
+recursive-include doc *
+recursive-include etc *

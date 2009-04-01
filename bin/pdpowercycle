@@ -1,0 +1,69 @@
+#!/usr/bin/python2.4
+# -*- coding: us-ascii -*-
+# vim:ts=2:sw=2:softtabstop=0:tw=74:smarttab:expandtab
+# $Id$
+
+# Copyright (C) 2008 The Android Open Source Project
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+
+"""Take measurements.
+
+"""
+
+
+import sys
+
+from pycopia import getopt
+from pycopia import timelib
+
+from droid.instruments import core
+
+
+def powercycle(argv):
+  """pdpowercycle <powersupply>
+
+  Use the powersupply to cycle power on the DUT.
+  """
+  try:
+    opts, longopts, args = getopt.getopt(argv[1:], "h?")
+  except getopt.GetoptError, err:
+    print >>sys.stderr, err
+    return 2
+
+  for opt, optarg in opts:
+    if opt in ("-h", "-?"):
+      print argv[0], ":"
+      print powercycle.__doc__
+      return 1
+
+  if not args:
+    print >>sys.stderr, "You need to supply the instrument name to use."
+    print >>sys.stderr, powercycle.__doc__
+    return 2
+
+  ps = core.GetInstrument(args[0])
+  voltage = ps.GetVoltage()
+  ps.Reset()
+  timelib.sleep(1)
+  ps.SetVoltage(voltage)
+  ps.outputstate = "on"
+  timelib.sleep(2)
+  ps.charger_outputstate = "on"
+
+  return 0
+
+
+sys.exit(powercycle(sys.argv))
+

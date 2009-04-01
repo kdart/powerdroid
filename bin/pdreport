@@ -1,0 +1,103 @@
+#!/usr/bin/python2.4
+# -*- coding: us-ascii -*-
+# vim:ts=2:sw=2:softtabstop=0:tw=74:smarttab:expandtab
+
+# Copyright (C) 2008 The Android Open Source Project
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+
+"""Graph data from reports.
+
+"""
+
+__author__ = 'dart@google.com (Keith Dart)'
+
+import sys
+import getopt
+
+from pycopia.aid import partial
+
+from droid import analyze
+
+def main(argv):
+  """Produce tables and charts of data files.
+
+  Usage:
+    pdreport [-h?ad] [-m <mode>] [-b <battery> [-t <timepoint>,...] <datafile>...
+
+  Options:
+    -m Mode: Graph, Histogram, Rollup-table, Summary-table, Battery-life,
+       Full-battery, Arve.
+    -t time points to limit domain of values. You can supply any
+       number of points, expressed as time values (e.g. 10s,1m,10m,1hr,24hr).
+    -a Also do Arve summary report when producing minute report.
+    -b Model name of battery used (default: EXCA160).
+    -r Rollup interval, for rollup table generation (timspec interval,
+        e.g. "1minute", "30sec", etc). Default is 1minute.
+    -c columns of data to plot, comma separated. Example: "1,4,5".
+
+    -d Enable debugging.
+    -h This help text.
+  """
+  mode = "S"
+  timemarks = None
+  columns = None
+  arve = False
+  battery = "DREA160"
+  rollup = "1minute"
+  try:
+    opts, args = getopt.getopt(argv[1:], "h?dam:t:b:c:r:")
+  except getopt.GetoptError, err:
+    print >>sys.stderr, err
+    return
+
+  for opt, optarg in opts:
+    if opt in ("-h", "-?"):
+      print argv[0], ":"
+      print main.__doc__
+      return
+    elif opt == "-m":
+      mode = optarg[0].upper()
+    elif opt == "-a":
+      arve = True
+    elif opt == "-r":
+      rollup = optarg
+    elif opt == "-b":
+      battery = optarg
+    elif opt == "-d":
+      from pycopia import autodebug # sets up implied debugger
+    elif opt == "-t":
+      timemarks = analyze.TimeMarksGenerator(optarg)
+    elif opt == "-c":
+      columns = map(int, optarg.split(","))
+
+  if mode == "G":
+    map(partial(analyze.DoGraph, timemarks=timemarks, columns=columns), args)
+  if mode == "H":
+    map(partial(analyze.DoHistogram, timemarks=timemarks, columns=columns), args)
+  if mode == "C":
+    map(partial(analyze.DoCCDFChart, timemarks=timemarks), args)
+  elif mode == "S":
+    map(partial(analyze.DoSummary, timemarks=timemarks), args)
+  elif mode == "R":
+    analyze.DoRollupTable(args, arve, rollup)
+  elif mode == "A":
+    map(partial(analyze.DoArveReport, timemarks=timemarks), args)
+  elif mode == "B":
+    map(partial(analyze.DoBattery, timemarks=timemarks, battery=battery), args)
+  elif mode == "F":
+    analyze.DoFullBatteryChart(args, timemarks=timemarks, battery=battery)
+
+main(sys.argv)
+

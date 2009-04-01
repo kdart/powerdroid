@@ -1,0 +1,8 @@
+.. This document is in RST format <http://docutils.sourceforge.net/rst.html>.
+.. Copyright, Google, Inc.
+..
+.. vim:ts=4:sw=4:softtabstop=4:smarttab:expandtab
+.. 
+======================
+Installing Power Droid
+======================

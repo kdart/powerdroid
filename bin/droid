@@ -1,0 +1,28 @@
+#!/usr/bin/python2.4 -OO
+# vim:ts=4:sw=4:softtabstop=0:smarttab
+
+# Copyright (C) 2008 The Android Open Source Project
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# All of the servers configuration, unix socket name, log file, and config
+# file name are all determined by the base name of the executable script.
+# The code below can stay the same for every server. just link a new name
+# to this script to get a new server (after creating the appropriate
+# configuration file).
+
+import sys
+from pycopia.WWW import fcgiserver
+
+fcgiserver.run_server(sys.argv)
+

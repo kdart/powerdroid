@@ -1,0 +1,133 @@
+/* battery droid css. */
+
+html,body {margin:5pt; padding:2px;}
+
+body {font-family: Helvetica, sans-serif;
+  background: #FFFFFF url(/media/images/power_droid_back.jpg) no-repeat scroll left top;
+}
+
+p {margin:0 10px 10px}
+
+a {display:inline; color: #981793;}
+a:link {
+background-color:transparent;
+text-decoration:none;
+}
+a:visited {
+background-color:transparent;
+color:#EE0022;
+text-decoration:none;
+}
+a:active {
+background-color:transparent;
+color:#FF0000;
+}
+a:hover {
+background-color:transparent;
+color:#EE0000;
+text-decoration:underline;
+}
+
+img {
+border:0pt none;
+}
+
+.applet { 
+  width:100%; min-width:760px; 
+  padding:0; 
+  border-width:0;
+  margin: 0 0 0 0;
+  float: none;
+}
+
+div.container {
+}
+
+
+div#header {
+}
+
+div#header h1 {
+background:#E0CB85 none repeat scroll center 0%;
+border: 5px outset #F0CE78;
+color: #1D4A53;
+float:right;
+padding:10px;
+margin-right: 1in;
+}
+
+div#wrapper {
+  width:100%; 
+  float:right; 
+  margin-left:-200px}
+
+div#content {
+  margin: 0px 0px 0px 200px; 
+  z-index: 10;
+}
+div#content p {line-height:1.4}
+
+div#navigation {
+  background:#BACAEE none repeat scroll 0% 50%;
+  float:left; 
+  margin-top: 160px;
+  width:200px}
+
+div#extra {
+  background:#DAA955 none repeat scroll 0% 50%;
+  clear:left; 
+  float:left; 
+  width:200px}
+
+div#footer {
+  clear:both; 
+  width:100%; 
+  background: #333; 
+  color: #FFF}
+div#footer p {margin:0; padding:5px 10px}
+
+
+span.editable {
+  color: #0F4C00;
+  background-color: #F4DBFF;
+  padding: 2px 5px 2px 5px;
+}
+
+form {
+  margin: 3px;
+  padding:3px;
+}
+
+form label,input,select,textarea {
+  clear: both;
+  margin: 3px;
+  width: 75%;
+}
+
+/* tables */
+table { border-color:#ccc; width: 100%;}
+
+td, th { font-size:11px; 
+line-height:14px; 
+border-bottom: 1px solid silver;
+vertical-align:top; padding:2px; 
+}
+
+th { text-align:left; font-size:12px; font-weight:bold; padding: 2px; }
+
+thead th, tfoot td { 
+  color:#606060; padding:2px 2px; font-size:11px; 
+  background: #e1e1e1; 
+  border-left:1px solid #ddd; border-bottom:1px solid #ddd; }
+
+tfoot td { border-bottom:none; border-top:1px solid #ddd; }
+.row1 { background:#EDF3FE; }
+.row2 { background:white; }
+
+
+object#chartobject {
+  border:3px outset #3D9AC3;
+  overflow-x: auto;
+  overflow-y: auto;
+}
+

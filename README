@@ -1,0 +1,50 @@
+===========
+Power Droid
+===========
+
+Google laboratory, data acquisition, and instrument control framework.
+
+Provides at least the following:
+
+A basic lab automation framework that utilizes GPIB/IEEE-488/SCPI
+instruments. Includes modules for measuring, reporting, and graphing. 
+
+Includes command line tools for taking measurements and reporting results.
+
+Controller interfaces for project Android and other devices.
+
+Test harness and test runner framework.
+
+Persistent data storage.
+
+A web browser application for reporting and interactive testing.
+
+
+Dependencies:
+
+======================================   ================================
+Package Name                             Version
+======================================   ================================
+Linux                                    2.6 (32 bit only)
+Python                                   2.4
+pycopia                                  latest
+linux-gpib                               3.2.09
+numpy                                    1.0.3.1
+matplotlib                               0.90.1
+ScientificPython                         2.7.6
+Durus                                    3.6
+HDF5                                     1.6.6
+pytables                                 2.0.1
+======================================   ================================
+
+
+Optional:
+
+======================================   ================================
+Package Name                             Version
+======================================   ================================
+ipython                                  0.8.1
+lighttpd                                 1.4
+simplejson                               1.7.1
+======================================   ================================
+

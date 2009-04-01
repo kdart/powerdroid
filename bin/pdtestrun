@@ -1,0 +1,60 @@
+#!/usr/bin/python2.4 -OS
+# vim:ts=2:sw=2:softtabstop=2:smarttab:expandtab
+
+# Copyright (C) 2008 The Android Open Source Project
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""A command-line interface to the droid test runner.
+
+Invokes a TestRunner with a TestRunnerInterface for CLI.
+"""
+
+import sys
+
+# Set This python's instance to use UTF-8 I/O as default. Useful for
+# international testing.
+# The site module sets up the Python default environment. Python always
+# imports this, implicitly, when it starts up. It is what then calls
+# sitecustomize. It also sets the default encoding (to "ascii"). But you
+# cannot re-set the default encoding once it has been set. So, what this
+# does it use the -S flag (suppress implicit importing of site), set the
+# default encoding first, then import site/sitecustomize. The default
+# encoding is now "utf-8". ;-)
+
+sys.setdefaultencoding("utf-8")
+import site
+
+import os
+
+from droid.qa import testrunner
+from droid.qa import testloader
+from droid.measure import core as measurecore
+
+
+def runtest(argv):
+  config = measurecore.MeasurementContext()
+  config.userinterfacetype = "default"
+  tr = testrunner.TestRunner(config)
+  tri = testloader.TestRunnerInterface(tr)
+  try:
+    tri(argv)
+  except testrunner.TestRunnerError:
+    ex, val, tb = sys.exc_info()
+    if config.flags.DEBUG:
+      from pycopia import debugger
+      debugger.post_mortem(tb, ex, val)
+    else:
+      print "%s: %s" % (ex, val)
+
+runtest(sys.argv)

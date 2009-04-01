@@ -1,0 +1,77 @@
+/* battery droid css. */
+
+html,body {margin:5pt; padding:2px;}
+
+body {font-family: Helvetica, sans-serif;
+  background: #FFFFFF url(/media/images/power_droid_back.jpg) no-repeat scroll left top;
+}
+
+p {margin:0 10px 10px}
+
+a {display:inline; color: #981793;}
+a:link {
+background-color:transparent;
+text-decoration:none;
+}
+a:visited {
+background-color:transparent;
+color:#EE0022;
+text-decoration:none;
+}
+a:active {
+background-color:transparent;
+color:#FF0000;
+}
+a:hover {
+background-color:transparent;
+color:#EE0000;
+text-decoration:underline;
+}
+
+img {
+border:0pt none;
+}
+
+div.container {
+}
+
+div#header {
+}
+
+div#header h1 {
+background:#E0CB85 none repeat scroll center 0%;
+border: 5px outset #F0CE78;
+color: #1D4A53;
+float:right;
+padding:10px;
+margin-right: 1in;
+}
+
+div#wrapper {
+  width:100%; 
+  float:right; 
+  margin-left:-200px}
+
+div#content {margin-left:200px; margin-top:10px}
+div#content p {line-height:1.4}
+
+div#navigation {
+  background:#BACAEE none repeat scroll 0% 50%;
+  float:left; 
+  margin-top: 160px;
+  width:200px
+  }
+
+div#extra {background:#FF8539; 
+background:#FF8539 none repeat scroll 0% 50%;
+  clear:left; 
+  float:left; 
+  width:200px}
+
+div#footer {
+  clear:both; 
+  width:100%; 
+  background: #333; 
+  color: #FFF}
+div#footer p {margin:0; padding:5px 10px}
+

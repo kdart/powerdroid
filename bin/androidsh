@@ -1,0 +1,13 @@
+#!/usr/bin/python2.4
+# -*- coding: us-ascii -*-
+# vim:ts=2:sw=2:softtabstop=0:tw=74:smarttab:expandtab
+#
+# Copyright Google Inc. All Rights Reserved.
+
+__author__ = 'dart@google.com (Keith Dart)'
+
+
+import sys
+from droid import devices_cli
+
+devices_cli.androidsh(sys.argv)
