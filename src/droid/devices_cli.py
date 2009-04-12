@@ -1,30 +1,18 @@
 #!/usr/bin/python2.4
 # -*- coding: us-ascii -*-
 # vim:ts=2:sw=2:softtabstop=0:tw=74:smarttab:expandtab
-
-# Copyright (C) 2008 The Android Open Source Project
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#      http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-
+# Copyright The Android Open Source Project
 
 """Command tool commands for devices.
 """
 
 
 import os
+import glob
 
 from pycopia import getopt
+from pycopia import timelib
 from pycopia import CLI
 
 from droid import adb
@@ -44,6 +32,7 @@ class AdbClientCommands(CLI.BaseCommands):
     sernos = dm.GetSerialNumbers()
     self.add_completion_scope("use", sernos)
     self.add_completion_scope("settings", ["gservice"])
+    self.add_completion_scope("wakelock", ["release"])
 
   def ls(self, argv):
     """ls
@@ -56,11 +45,15 @@ class AdbClientCommands(CLI.BaseCommands):
   Interact with specific device."""
     opts, longopts, args = self.getopt(argv, "")
     dev = devices.GetDevice(args[0])
+    if dev is None:
+      self._ui.error("Device is not available or is offline.")
+      return
     cmd = self.clone(AndroidCommands)
     if dev.build:
       cmd._setup(dev, "%s-%s> " % (dev.build.product, dev.serialno))
     else:
       cmd._setup(dev, "unknown-%s> " % (dev.serialno,))
+    dev.UpdateAllStates()
     raise CLI.NewCommand, cmd
 
 
@@ -86,7 +79,45 @@ class AndroidCommands(CLI.GenericCLI):
     except KeyboardInterrupt:
       pass
 
-  ls = default_command # override 'ls' here since it's also built-in
+  def ls(self, argv):
+    """ls [path]
+  List files on the DUT."""
+    if len(argv) > 1:
+      path = argv[1]
+    else:
+      path = "/"
+    self._print("mode    size     time                     name")
+    self._obj._controller.List(path, self._List_cb)
+    self._print("\n")
+
+  def _List_cb(self, mode, size, time, name, cookie):
+    self._print("0%06o %8d %s %s" % (mode, size, timelib.ctime(time), name))
+
+  def push(self, argv):
+    """ push <local> <remote>
+  copy file to device."""
+    loc = argv[1]
+    rem = argv[2]
+    self._obj._controller.Push(loc, rem)
+
+  def rcp(self, argv):
+    """ rcp <local>... <remotedir>
+  Remote copy. Copy local files (which may contain wildcards) 
+  to device directory."""
+    if len(argv) < 3:
+      raise CLI.UsageError
+    rem = argv[-1]
+    for part in argv[1:-1]:
+      flist = glob.glob(os.path.expandvars(os.path.expanduser(part)))
+      for fname in flist:
+        self._obj._controller.Push(fname, rem)
+
+  def pull(self, argv):
+    """pull <remote> <local>
+  copy file from device."""
+    loc = argv[2]
+    rem = argv[1]
+    self._obj._controller.Pull(loc, rem)
 
   def reboot(self, argv):
     """reboot [bootloader]
@@ -97,6 +128,16 @@ class AndroidCommands(CLI.GenericCLI):
       bootloader = False
     self._obj.Reboot(bootloader)
     raise CLI.CommandQuit
+
+  def remount(self, argv):
+    """remount
+  Remount the /system partition read-write."""
+    self._obj._controller.Remount()
+
+  def refresh(self, argv):
+    """refresh
+  Refresh available service state information from DUT."""
+    self._obj.UpdateAllStates()
 
   def bootcomplete(self, argv):
     """bootcomplete
@@ -109,21 +150,26 @@ class AndroidCommands(CLI.GenericCLI):
   def getprop(self, argv):
     """getprop <key>
   Return the value of property with name <key>."""
-    rv = self._obj.GetProp(argv[1])
-    self._print(rv)
-    return rv
+    if len(argv) > 1:
+      prop = self._obj.GetProp(argv[1])
+      self._print(prop)
+      return prop
+    else:
+      props = self._obj.GetAllProps().items()
+      props.sort()
+      for key, value in props:
+        self._print("%40.40s: %s" % (key, value))
+      return props
 
   def setprop(self, argv):
     """setprop <key> <value>
   Set the value of property with name <key> to <value>."""
-    self._obj.SetProp(argv[1], argv[2])
-    self._print(rv)
-    return rv
+    return self._obj.SetProp(argv[1], argv[2])
 
   def state(self, argv):
     """state
   Show current state."""
-    self._print(self._obj.GetState())
+    return self._print(self._obj.GetState())
 
   def bugreport(self, argv):
     """bugreport [<filename>]
@@ -147,9 +193,13 @@ class AndroidCommands(CLI.GenericCLI):
     self._obj._controller.DumpState(self._ui._io)
 
   def dumpsys(self, argv):
-    """dumpsys
+    """dumpsys [<section>]
   Emit system state."""
-    self._obj._controller.DumpSys(self._ui._io)
+    if len(argv) > 1:
+      section = argv[1]
+    else:
+      section = None
+    self._obj._controller.DumpSys(self._ui._io, section)
 
   def logcat(self, argv):
     """logcat [options] [filterspecs]
@@ -253,10 +303,12 @@ class AndroidCommands(CLI.GenericCLI):
   If no command supplied then show the current state."""
     if len(argv) > 1:
       cmd = argv[1]
-      if cmd == "start":
+      if cmd in ("start", "on"):
         self._obj.StartCPUEater()
-      else:
+      elif cmd in ("stop", "off"):
         self._obj.StopCPUEater()
+      else:
+        raise CLI.CLISyntaxError("Must supply 'start' or 'stop'.")
     else:
       if self._obj.IsCPUEaterRunning():
         self._print("CPU eater is running.")
@@ -275,6 +327,13 @@ class AndroidCommands(CLI.GenericCLI):
     cf = Storage.GetConfig()
     self._obj.UpdateAPN(cf.environment.APNINFO)
     self._print("Added APN info for %r." % cf.environment.APNINFO.name)
+
+  def apnlist(self, argv):
+    """apnlist
+  Display all configured APN."""
+    l = self._obj.GetAPNList()
+    for entry in l:
+      self._print(entry, "\n")
 
   def touch(self, argv):
     """touch <x> <y>
@@ -436,6 +495,50 @@ class AndroidCommands(CLI.GenericCLI):
     else:
       self._ui.error("No such setting value.")
 
+  def wifi(self, argv):
+    """wifi [on | off | reset]
+  Get, set, display, or reset wifi state."""
+    if len(argv) > 1:
+      cmd = argv[1].lower()
+      if cmd == "on":
+        self._obj.SetWifiON()
+      elif cmd == "off":
+        self._obj.SetWifiOFF()
+      elif cmd.startswith("res"):
+        self._obj.WifiReset()
+      else:
+        raise CLI.CLISyntaxError("not a valid command.")
+    else:
+      self._print(self._obj.states.wifi)
+
+  def bluetooth(self, argv):
+    """bluetooth [on | off]
+  Get, set, or display bluetooth state."""
+    if len(argv) > 1:
+      cmd = argv[1].lower()
+      if cmd == "on":
+        self._obj.SetBluetoothON()
+      elif cmd == "off":
+        self._obj.SetBluetoothOFF()
+      else:
+        raise CLI.CLISyntaxError("on or off?")
+    else:
+      self._print(self._obj.states.bluetooth)
+
+  def airplane(self, argv):
+    """airplane [on | off]
+  Get, set, or display airplane state."""
+    if len(argv) > 1:
+      cmd = argv[1].lower()
+      if cmd == "on":
+        self._obj.SetAirplaneON()
+      elif cmd == "off":
+        self._obj.SetAirplaneOFF()
+      else:
+        raise CLI.CLISyntaxError("on or off?")
+    else:
+      self._print(self._obj.states.airplane)
+
   def account(self, argv):
     """account [add|del|setup] [<name> <password>]
   Add or delete a GAIA account on device. The setup subcommand performs
@@ -446,7 +549,7 @@ class AndroidCommands(CLI.GenericCLI):
     for opt, arg in opts:
       if opt == "-u":
         useui = True
-    cmd = args[0]
+    cmd = args[0].lower()
     if cmd.startswith("add"):
       name = args[1]
       password = args[2]
@@ -571,21 +674,90 @@ class AndroidCommands(CLI.GenericCLI):
     self._print(self._obj.StartSettings())
 
   def gservice(self, argv):
-    """gservice <name> [<value>]
+    """gservice <name> [<value>] | reset <name> | list
   Get or set a GService parameter.
+  If name is 'reset' then reset a value to server provided.
+  If name is 'list' then show all current values.
   Some examples:
     gservice gtalk_heartbeat_interval_ms 300000
     gservice gtalk_max_server_heartbeat_time 2400000 """
     argc = len(argv)
     if argc >= 3:
       name = argv[1]
-      value = argv[2]
-      self._obj.SetGservicesSetting(name, value)
+      value = " ".join(argv[2:])
+      if name == "reset":
+        self._obj.ResetGserviceSetting(value)
+      else:
+        self._obj.OverrideGserviceSetting(name, value)
     elif argc == 2:
       name = argv[1]
-      self._print(self._obj.GetGservicesSetting(name))
+      if name == "list":
+        gs = self._obj.GetAllGservicesSettings()
+        for name, value in gs.items():
+          self._print("%40.40s: %s" % (name, value))
+      else:
+        self._print(self._obj.GetGservicesSetting(name))
     else:
       raise CLI.CLISyntaxError("Must supply name, or name and value.")
+
+  def sendintent(self, argv):
+    """sendintent <action>
+  Broadcast the <action> intent on the DUT."""
+    self._print(self._obj.SendIntent(argv[1]))
+
+  def setting(self, argv):
+    """setting [<name> [<value>]]
+  Get or set a system config setting. This uses the DUT database directly.
+
+  Some examples:
+    setting screen_brightness 200
+    setting date_format """
+    argc = len(argv)
+    if argc >= 3:
+      name = argv[1]
+      value = " ".join(argv[2:])
+      self._obj.SetSystemSetting(name, value)
+    elif argc == 2:
+      name = argv[1]
+      if name.startswith("sync_") or name.startswith("listen_"):
+        self._print(self._obj.GetSyncSetting(name))
+      else:
+        self._print(self._obj.GetSystemSetting(name))
+    else:
+      self._obj.UpdateAllStates()
+      for name, value in self._obj._system_settings.items():
+        self._print("%40.40s: %s" % (name, value))
+      for name, value in self._obj._sync_settings.items():
+        self._print("%40.40s: %s" % (name, value))
+
+  def sync(self, argv):
+    """sync [<name>]
+  Get sync preference setting.  """
+    self._obj.UpdateSyncSettings()
+    if len(argv) > 1:
+      for name in argv[1:]:
+        value = self._obj._sync_settings[name]
+        self._print("%40.40s: %s" % (name, value))
+    else:
+      for name, value in self._obj._sync_settings.items():
+        self._print("%40.40s: %s" % (name, value))
+
+  def wakelock(self, argv):
+    """wakelock [release] <name>
+  Acquire, get or release a system wakelock."""
+    cont = self._obj._controller
+    if len(argv) > 1:
+      name = argv[1]
+      if name.startswith("rel"):
+        name = argv[2]
+        cont.ShellCommandOutput(
+            "echo -n %s > /sys/android_power/release_wake_lock" % name)
+      else: # acquire
+        cont.ShellCommandOutput(
+            "echo -n %s > /sys/android_power/acquire_partial_wake_lock" % name)
+    else:
+      self._print_list(cont.ShellCommandOutput(
+          "cat /sys/android_power/acquire_partial_wake_lock").split())
 
 
 

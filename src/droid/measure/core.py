@@ -1,22 +1,8 @@
 #!/usr/bin/python2.4
 # -*- coding: us-ascii -*-
 # vim:ts=2:sw=2:softtabstop=0:tw=74:smarttab:expandtab
-
-# Copyright (C) 2008 The Android Open Source Project
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#      http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-
+# Copyright The Android Open Source Project
 
 """Perform paced measurements or other functions.
 
@@ -42,12 +28,19 @@ class SampleMeasurer(object):
   def __call__(self, timestamp, lastvalue):
     return lastvalue # or a new value, but some value.
 
+ example measure set:
+[
+ (voltage.VoltageMeasurer,       5.0, None, None, None, "voltage"),
+ (current.POwerCurrentMeasurer, "fast", None, None, None, "current"),
+]
+
 """
 
 import sys
 
 from pycopia import dictlib
 
+#from droid.reports import core as reportscore
 from droid.storage import Storage
 
 
@@ -88,14 +81,17 @@ def MeasurementContext(**kwargs):
   """
   ctx = Storage.GetConfig()
   # measurement context global settings
-  ctx.timespan = 3600.0    # total measurement span
+  ctx.timespan = 1800.0   # default measurement time span
   ctx.calltime = 60.0     # time to keep calls up, if any
   ctx.clockrate = 16      # clock rate of sequencer, in Hz
   ctx.delay = 5           # default delay between measurements 
+  ctx.timeout = "T3s"     # GPIB instrument timeout 
   ctx.useprogress = False # show a progress meter
   ctx.reset = False       # perform an instrument reset.
   ctx.triggered = False   # if performing a triggered measurement
   ctx.capturemode = "N"   # default normal capture mode.
+  ctx.SIM = "T-Mobile"   # What SIM is in the DUT
+  ctx.datafilename = "-" 
 
   # trigger parameters have their own namespace.
   ctx.trigger = ConfigDict("trigger")
@@ -131,14 +127,13 @@ def MeasurementContext(**kwargs):
   ctx.bttestsets.autoanswer = True
   ctx.bttestsets.pin = 0
 
-  # datafiles 
-  ctx.datafiles = ConfigDict("datafiles")
-  ctx.datafiles.format = "G"
-  ctx.datafiles.name = None
-
   # power supplies
   ctx.powersupplies = ConfigDict("powersupplies")
-  ctx.powersupplies.voltage = 3.8
+  ctx.powersupplies.voltage = 3.8     # volts
+  ctx.powersupplies.timeout = "T3s"   # GPIB timeout contant names
+  ctx.powersupplies.window = "HANN"   # 'HANN' or 'RECT'
+  ctx.powersupplies.detector = "ACDC" # 'ACDC' or 'DC'
+  ctx.powersupplies.maxcurrent = 3.0 # for agilent can be: 3.0, 1.0 or 0.020
   ctx.powersupplies.subsamples = 4096
   ctx.powersupplies.subsampleinterval = 15.6e-6
 
@@ -188,21 +183,67 @@ def MeasurementContext(**kwargs):
       1000.0, 1140.0, 1280.0, 1420.0, 1560.0, 1700.0, 1840.0, 1980.0, 
       2120.0, 2260.0, 2400.0, 2540.0, 2680.0, 2820.0, 3000.0]
 
-  # measurers
+  # modems
+  ctx.modems = ConfigDict("modems")
+  ctx.modems.autoanswer = False
+  ctx.modems.dialednumber = "6502849239"
+  ctx.modems.autoredial = False
+  ctx.modems.redialattempts = 5
+
+  # self testing
+  ctx.debug = ConfigDict("debug")
+  ctx.debug.sleep = 0.0
+
+  ### measurers ###
+  # common settings
   ctx.measure = ConfigDict("measure")
   ctx.measure.continuous = False
   ctx.measure.timeout = 10.0 # zero means no timeout
   ctx.measure.external_attenuation = 10.0 # dB on RF signal
+
   # SRB loopback BER tests
   ctx.measure.srbber = ConfigDict("srbber")
   ctx.measure.srbber.count = 80000
+  ctx.measure.srbber.multimeasure = True
+  ctx.measure.srbber.measurecount = 10
   ctx.measure.srbber.txpower = -75.0 # dBm, -85 at device with 10dB attenuator
   ctx.measure.srbber.delay = 0.5
   ctx.measure.srbber.framedelay = -1 # less than zero means automatic delay selection
 
+  # transmitter power measurements
+  ctx.measure.transmitpower = ConfigDict("transmitpower")
+  ctx.measure.transmitpower.multimeasure = True
+  ctx.measure.transmitpower.measurecount = 10
+  ctx.measure.transmitpower.burstcapture = "ALL"
+  ctx.measure.transmitpower.estimated_power = True # needed for 8PSK modulation
+  ctx.measure.transmitpower.trigger_qualification = True
+
   # caller overrides.
   ctx.update(kwargs)
   return ctx
+
+
+# Shortcut/alias map for common measurers
+MEASUREALIAS = {
+  "voltage": "droid.measure.voltage.VoltageMeasurer",
+  "current": "droid.measure.current.CurrentMeasurer",
+  "progress": "droid.measure.core.TimeProgressMeter",
+  # power supply measurers
+  "pscurrent": "droid.measure.current.PowerCurrentMeasurer",
+  "psvoltage": "droid.measure.current.PowerVoltageMeasurer",
+  "pschargecurrent": "droid.measure.current.PowerSupplyChargeCurrentMeasurer",
+  # PS controllers
+  "pson": "droid.measure.core.PowerSupplyOutputOn",
+  "psoff": "droid.measure.core.PowerSupplyOutputOff",
+  "usbon": "droid.measure.core.ChargerOn",
+  "usboff": "droid.measure.core.ChargerOff",
+  "toggleusb": "droid.measure.core.ToggleCharger",
+  # testset controllers
+  "tstoggleoutput": "droid.measure.testset.ToggleRFOutput",
+  # for unit testing
+  "null": "droid.measure.core.NullMeasurer",
+  "debug": "droid.measure.core.DebugMeasurer",
+}
 
 
 class OldMeasurer(object):
@@ -228,7 +269,6 @@ class OldMeasurer(object):
         self.Raw(5, self._context.timespan)
     finally:
       self._report.Finalize()
-      self._report.close()
 
   def Single(self):
     raise NotImplementedError
@@ -238,10 +278,15 @@ class OldMeasurer(object):
 
 
 class BaseMeasurer(object):
-  """Base class and example for a typical measurement function."""
-  # catchers to avoid AttributeError
+  """Base class and example for a typical measurement function.
+
+  Objects based on this class are intended for use in the measurement
+  sequencer. 
+  """
+  # Default values to avoid AttributeError
   datafile = None 
   measuretime = 1.0
+  delaytime = 30.0
 
   def __init__(self, context):
     pass
@@ -249,7 +294,7 @@ class BaseMeasurer(object):
   def __call__(self, timestamp, lastvalue):
     return lastvalue # or a new value, but some value.
 
-  def Initialize(self, context):
+  def Initialize(self):
     pass
 
   def Finalize(self):
@@ -279,6 +324,100 @@ class TimeProgressMeter(BaseMeasurer):
     sys.stderr.write("                                                     \r")
     sys.stderr.write("%12.2fs (%6.2f%%) %s" % (dt, percent, value))
     sys.stderr.flush()
+    return value
+
+
+class ToggleCharger(BaseMeasurer):
+  """Toggle the charger output state. 
+
+  This controls the USB via the USB switch in The Android lab.
+  """
+  def __init__(self, ctx):
+    super(ToggleCharger, self).__init__(ctx)
+    self._device = ctx.environment.powersupply
+
+  def Initialize(self):
+    self._chargerstate = self._device.GetChargerOutputState()
+
+  def __call__(self, timestamp, lastvalue):
+    self._chargerstate = not self._chargerstate
+    self._device.SetChargerOutputState(self._chargerstate)
+    return lastvalue
+
+
+class ChargerOff(BaseMeasurer):
+  """Force charger output (USB controller) off.
+  """
+  def __init__(self, ctx):
+    super(ChargerOff, self).__init__(ctx)
+    self._device = ctx.environment.powersupply
+
+  def __call__(self, timestamp, lastvalue):
+    self._device.SetChargerOutputState(False)
+    return lastvalue
+
+
+class ChargerOn(BaseMeasurer):
+  """Force charger output (USB controller) on.
+  """
+  def __init__(self, ctx):
+    super(ChargerOn, self).__init__(ctx)
+    self._device = ctx.environment.powersupply
+
+  def __call__(self, timestamp, lastvalue):
+    self._device.SetChargerOutputState(True)
+    return lastvalue
+
+
+class PowerSupplyOutputOff(BaseMeasurer):
+  """Set power supply output off.
+  """
+  def __init__(self, ctx):
+    super(PowerSupplyOutputOff, self).__init__(ctx)
+    self._device = ctx.environment.powersupply
+
+  def __call__(self, timestamp, lastvalue):
+    self._device.SetOutputState(False)
+    return lastvalue
+
+
+class PowerSupplyOutputOn(BaseMeasurer):
+  """Set power supply output on.
+  """
+  def __init__(self, ctx):
+    super(PowerSupplyOutputOn, self).__init__(ctx)
+    self._device = ctx.environment.powersupply
+
+  def __call__(self, timestamp, lastvalue):
+    self._device.SetOutputState(True)
+    return lastvalue
+
+
+class NullMeasurer(BaseMeasurer):
+  """Do nothing. Useful for self-testing.
+  """
+  def __call__(self, timestamp, lastvalue):
+    return lastvalue
+
+
+class DebugMeasurer(BaseMeasurer):
+  """Do nothing. Useful for debugging.
+  """
+  def __init__(self, context):
+    self._datafile = context.datafilename
+    self._sleeptime = context.debug.sleep
+
+  def Initialize(self):
+    global scheduler
+    from pycopia import scheduler
+    print >>sys.stderr, "DebugMeasure (%s): Initialize()" % self._datafile
+
+  def Finalize(self):
+    print >>sys.stderr, "DebugMeasure (%s): Finalize()" % self._datafile
+
+  def __call__(self, timestamp, value):
+    print >>sys.stderr, self._datafile, "->", timestamp, value
+    scheduler.sleep(self._sleeptime)
     return value
 
 

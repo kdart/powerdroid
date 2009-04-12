@@ -1,22 +1,8 @@
 #!/usr/bin/python2.4
 # -*- coding: us-ascii -*-
 # vim:ts=2:sw=2:softtabstop=0:tw=74:smarttab:expandtab
-
-# Copyright (C) 2008 The Android Open Source Project
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#      http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-
+# Copyright The Android Open Source Project
 
 """CLI commands for test sets.
 """
@@ -38,10 +24,11 @@ class Ag8960CLI(gpibCLI.GenericInstrument):
     self.add_completion_scope("profile", 
         ["gsm", "grps", "egprs", "edge", "edgehp"])
     self.add_completion_scope("use", 
-        ["afgenerator", "afanalyzer", "mtgenerator", "mtanalyzer", "srbber"])
+        ["afgenerator", "afanalyzer", "mtgenerator", "mtanalyzer", "srbber",
+          "mstxpower", "msetxpower"])
 
   def use(self, argv):
-    """use afgen | afana | mtgen | mtana | srbber
+    """use afgen | afana | mtgen | mtana | srbber | mstxpower | msetxpower
   Select a subinstrument to use.
     """
     devname = argv[1]
@@ -60,6 +47,15 @@ class Ag8960CLI(gpibCLI.GenericInstrument):
     elif devname.startswith("srb"):
       inst = self._obj.GetEGPRSBitErrorMeasurer()
       cmd = self.clone(SRBberCLI)
+    elif devname.startswith("mst"):
+      inst = self._obj.GetTransmitPowerMeasurer()
+      cmd = self.clone(MeasurerCLI)
+    elif devname.startswith("mse"):
+      inst = self._obj.GetEGPRSTransmitPowerMeasurer()
+      cmd = self.clone(MeasurerCLI)
+    elif devname.startswith("thr"):
+      inst = self._obj.GetDataThroughputMeasurer()
+      cmd = self.clone(ThroughputCLI)
     else:
       raise CLI.CLISyntaxError
     errs = inst.Errors()
@@ -151,12 +147,6 @@ class Ag8960CLI(gpibCLI.GenericInstrument):
     rpt.timestamp = timestamp
     self._ip_traffic_report = rpt
 
-  def profile(self, argv):
-    """profile gsm |grps |egprs |edge | edgehp
-  Set the carrier profile."""
-    name = argv[1]
-    self._obj.SetProfile(name)
-
   def downlinkaudio(self, argv):
     """downlinkaudio [<mode>]
   Set the downlink (to DUT) audio speech source. 
@@ -190,6 +180,111 @@ class Ag8960CLI(gpibCLI.GenericInstrument):
     """wipescreen
   Remove error messages from screen."""
     self._obj.ClearScreen()
+
+  def distance(self, argv):
+    """distance <relative_distance>
+  Set the relative distance (simulated) of the mobile and base station.
+  Values such as "near", "far", "normal" are acceptable."""
+    self._obj.SetDistance(argv[1])
+
+
+class Ag8960GPRSCLI(Ag8960CLI):
+
+  def _reset_scopes(self):
+    super(Ag8960GPRSCLI, self)._reset_scopes()
+    self.add_completion_scope("toggle", ["qosp",])
+
+  def profile(self, argv):
+    """profile (gsm | grps | egprs | edge | edge_far | edgehp) [<network>]
+  Set the carrier profile."""
+    name = argv[1]
+    if len(argv) > 2:
+      network = argv[2]
+    else:
+      network = self._environ["SIM"]
+    self._obj.SetProfile(name, network)
+
+  def detach(self, argv):
+    """detach
+  Initiate a GPRS detach."""
+    self._obj.Detach()
+
+  def data(self, argv):
+    """data on | off
+  Set the data connection state."""
+    val = core.GetBoolean(argv[1])
+    self._obj.DataConnection(val)
+
+  def qosp(self, argv):
+    """qosp [<qospN>] [<ipindex>]
+  Get or set the quality of service profile."""
+    if len(argv) > 1:
+      if len(argv) > 2:
+        ipindex = int(argv[2])
+      else:
+        ipindex = 1
+      qosp = int(argv[1])
+      self._obj.SetMSQualityOfService(qosp, ipindex)
+    else:
+      self._print(self._obj.GetMSQualityOfService())
+
+  def toggle(self, argv):
+    """toggle <setting>
+  Toggle the setting, by name.
+  Currently available:
+    qosp - quality of service profile
+    data - data state
+  """
+    setting = argv[1]
+    if setting.startswith("qo"):
+      if len(argv) > 2:
+        ipindex = int(argv[2])
+      else:
+        ipindex = 1
+      self._ToggleQOS(ipindex)
+    elif setting.startswith("da"):
+      self._ToggleData()
+    else:
+      self._ui.error("No such setting value.")
+
+  def _ToggleQOS(self, ipindex):
+      qosp = self._obj.GetMSQualityOfService(ipindex)
+      if qosp != 1:
+        qosp = 1
+      else:
+        qosp = 2
+      self._obj.SetMSQualityOfService(qosp, ipindex)
+
+  def _ToggleData(self):
+    try:
+      self._datastate = not self._datastate
+    except AttributeError:
+      self._datastate = False
+    self._obj.DataConnection(self._datastate)
+
+  def multislot(self, argv):
+    """multislot [<downlink> [<uplink>]]
+  Get or set multislot configuration."""
+    if len(argv) > 1:
+      if len(argv) > 2:
+        uplink = int(argv[2])
+      else:
+        uplink = 2
+      downlink = int(argv[1])
+      self._obj.SetMultiSlotConfig(downlink, uplink)
+    else:
+      downlinks, uplinks = self._obj.GetMultiSlotConfig()
+      self._print("downlinks: %d, uplinks: %d" % (downlinks, uplinks))
+      self._print("(%dD%dU)" % (downlinks, uplinks))
+
+
+class Ag8960CDMACLI(Ag8960CLI):
+
+  def profile(self, argv):
+    """profile cdma
+  Set the carrier profile."""
+    name = argv[1]
+    self._obj.SetProfile(name, "test") # authentication required
 
 
 def ParseBTAddress(btstring):
@@ -367,6 +462,24 @@ class SRBberCLI(MeasurerCLI):
     """startdata
   Kick off the data connection."""
     self._obj.StartData()
+
+
+class ThroughputCLI(MeasurerCLI):
+
+  def _reset_scopes(self):
+    super(ThroughputCLI, self)._reset_scopes()
+    self.add_completion_scope("throughput", ["iprx", "iptx", "otarx", "otatx"])
+
+  def throughput(self, argv):
+    """throughput iprx | iptx | otarx | otatx
+  Show the current values for the specified network trace measurement."""
+    trace = argv[1]
+    self._print(self._obj.GetDataRate(trace.upper()))
+
+  def clear(self, argv):
+    """clear
+  Reset counters."""
+    self._obj.Clear()
 
 
 class Ag8960_AFG_CLI(GeneratorCLI):

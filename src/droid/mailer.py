@@ -1,22 +1,8 @@
 #!/usr/bin/python2.4
 # -*- coding: us-ascii -*-
 # vim:ts=2:sw=2:softtabstop=0:tw=74:smarttab:expandtab
-
-# Copyright (C) 2008 The Android Open Source Project
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#      http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-
+# Copyright The Android Open Source Project
 
 """Send mails to Power Droids gmail account for testing the sync feature.
 Simulates a realistic email conversation so that the Google mail "does
@@ -367,12 +353,10 @@ class Mailer(object):
   """Mail a bunch o' messages.
   """
 
-  def __init__(self, topics, messages, delay, recipient, senders):
-    if not senders:
-      raise ValueError("Mailer: senders must be list of From addresses.")
+  def __init__(self, topics, messages, delay, recipient, senders=None):
     self._topics = topics
     self._recipient = recipient
-    self._senders = map(GetFullAddress, senders)
+    self._senders = map(GetFullAddress, senders or DEFAULT_SENDERS)
     self._messages = messages # messages per topic.
     self._delay = delay
 
@@ -397,6 +381,7 @@ def pdmail(argv):
     -f  <fromaddress>,... comma separated list of source (From) email
         addresses.
     -d  <delay>  Delay, in seconds, between messages (default 60 s).
+    -D  Turn on auto debugging.
   """
   import getopt
   recipient = DEFAULTACCOUNT
@@ -405,7 +390,7 @@ def pdmail(argv):
   Nmessages = 10
   delay = 60.0
   try:
-    opts, args = getopt.getopt(argv[1:], "h?d:n:g:N:f:")
+    opts, args = getopt.getopt(argv[1:], "Dh?d:n:g:N:f:")
   except getopt.GetoptError, err:
     print >>sys.stderr, err
     return 2
@@ -423,6 +408,8 @@ def pdmail(argv):
       senders = map(str.strip, optarg.split(","))
     elif opt == "-N":
       Ntopics = int(optarg)
+    elif opt == "-D":
+      from pycopia import autodebug
 
   if len(args) > 0:
     recipient = args[0]

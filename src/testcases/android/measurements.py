@@ -1,22 +1,8 @@
 #!/usr/bin/python2.4
 # -*- coding: us-ascii -*-
 # vim:ts=2:sw=2:softtabstop=0:tw=74:smarttab:expandtab
-
-# Copyright (C) 2008 The Android Open Source Project
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#      http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-
+# Copyright The Android Open Source Project
 
 """Mixin classes for measurement functions.
 
@@ -26,7 +12,7 @@ import os
 import shutil
 
 from droid.qa import core
-from droid.qa import constants
+from droid.measure import core as measurecore
 from droid.measure import sequencer
 from droid.storage import datafile
 
@@ -36,27 +22,35 @@ class MeasurementsMixin(object):
   measurement methods.
   *Must* be mixed in with a core.Test subclass.
   """
-  def Initialize(self):
-    cf = self.config
-    cf.datafiles.name = "/var/tmp/droid_measure"
 
-  def Finalize(self, result):
+
+  def GetMetadata(self, extra=None):
+    """Construct a metadata mapping.
+    """
+    rv = {}
+    rv["testname"] = self.test_name.split(".")[-1]
+    rv["starttime"] = self.GetStartTimestamp()
+    rv.update(self.config.environment.DUT.states)
+    if extra is not None:
+      rv.update(extra)
+    return rv
+
+  def SaveMeasurementFile(self, metadata=None):
     cf = self.config
-    cf.logfile.note(str(cf.environment.DUT))
+    metadata = self.GetMetadata(metadata)
+    metadata["voltage"] = int(cf.powersupplies.voltage * 100)
     fpdir = datafile.GetDirectoryName(cf)
-    fpname = datafile.GetFileName(self)
-    if result == constants.PASSED and not cf.flags.DEBUG:
-      datafile.MakeDataDir(fpdir)
-      tmpfile = cf.datafiles.name + ".dat"
-      dest = "%s/%s" % (fpdir, fpname)
-      if tmpfile and os.path.exists(tmpfile):
-        shutil.move(tmpfile, dest)
-        self.Info("Created data file %r." % (dest,))
-        os.chmod(dest, 0440)
-    self.Info("Collecting bug report.")
-    cf.environment.DUT.BugReport(cf.logfile)
+    datafile.MakeDataDir(fpdir)
+    fpname = datafile.GetFileName(metadata)
+    tmpfile = cf.datafilename
+    dest = "%s/%s" % (fpdir, fpname)
+    if tmpfile and os.path.exists(tmpfile):
+      shutil.move(tmpfile, dest)
+      self.Info("Created data file %r." % (dest,))
+      os.chmod(dest, 0440)
+    return dest
 
-  def TakeVoltageMeasurements(self, checkers=None):
+  def _TakeVoltageMeasurements(self, checkers):
     from droid.measure import voltage
     cf = self.config
     seq = sequencer.Sequencer(cf)
@@ -71,11 +65,26 @@ class MeasurementsMixin(object):
     try:
       seq.Run()
     finally:
-      sequencer.Close()
+      sequencer.SequencerClose()
 
-  def TakeCurrentMeasurements(self, checkers=None):
+  def TakeVoltageMeasurements(self, checkers=None, delay=5.0, metadata=None):
+    cf = self.config
+    cf.datafilename = "/var/tmp/voltage.dat"
+    env = cf.environment
+    self.DisconnectDevice()
+    self.Sleep(float(cf.get("measuredelay", delay)))
+    try:
+      self._TakeVoltageMeasurements(checkers)
+    finally:
+      self.ConnectDevice()
+      env.DUT.ActivateUSB()
+    if not cf.flags.DEBUG:
+      self.SaveMeasurementFile(metadata)
+
+  def _TakeCurrentMeasurements(self, checkers, delay):
     from droid.measure import current
     cf = self.config
+    cf.datafilename = "/var/tmp/current.dat"
     ps = cf.environment.powersupply
     # this re-verifies USB is not connected by checking for negative
     # current (charger on).
@@ -84,8 +93,11 @@ class MeasurementsMixin(object):
       raise core.TestSuiteAbort(
           "USB seems to be charging DUT. Current is: %s." % dccurrent)
     seq = sequencer.Sequencer(cf)
-    cm = current.PowerCurrentMeasurer(cf)
-    seq.AddFunction(cm, cm.measuretime)
+    usboff = measurecore.ChargerOff(cf)
+    currentmeasurer = current.PowerCurrentMeasurer(cf)
+    seq.AddFunction(usboff, 0, delay=5.0)
+    seq.AddFunction(currentmeasurer, currentmeasurer.measuretime, 
+        delay=float(cf.get("measuredelay", delay)))
     if checkers:
       checkerdelay = len(checkers)
       for i, checker in enumerate(checkers):
@@ -95,7 +107,19 @@ class MeasurementsMixin(object):
     try:
       seq.Run()
     finally:
-      sequencer.Close()
+      sequencer.SequencerClose()
+
+  def TakeCurrentMeasurements(self, checkers=None, delay=60.0, metadata=None):
+    cf = self.config
+    env = cf.environment
+    self.DisconnectDevice()
+    try:
+      self._TakeCurrentMeasurements(checkers, delay)
+    finally:
+      self.ConnectDevice()
+      env.DUT.ActivateUSB()
+    if not cf.flags.DEBUG:
+      self.SaveMeasurementFile(metadata)
 
   def StartIPCounters(self):
     cf = self.config
@@ -110,6 +134,7 @@ class MeasurementsMixin(object):
         endcounters - startcounters))
 
   def CallChecker(self, timestamp, lastvalue):
+    """Can be used as a call connected checker for measurements."""
     if not self.config.environment.testset.callcondition.connected:
       self.config.environment.DUT.CallInactive()
       raise core.TestFailError("Call dropped at %s." % timestamp)

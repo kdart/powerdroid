@@ -1,33 +1,16 @@
 #!/usr/bin/python2.4
 # -*- coding: us-ascii -*-
 # vim:ts=2:sw=2:softtabstop=0:tw=74:smarttab:expandtab
-
-# Copyright (C) 2008 The Android Open Source Project
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#      http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-
+# Copyright The Android Open Source Project
 
 """Current (I) measurers.
 """
 
-import sys
 import time
 
-from pycopia import scheduler
-
 from droid.measure import core
-from droid.reports import flatfile
+from droid.reports import core as reportcore
 
 
 class SpecialCurrentMeasurer(core.OldMeasurer):
@@ -37,7 +20,7 @@ class SpecialCurrentMeasurer(core.OldMeasurer):
     ctx = self._context
     inst.clear()
     inst.write('SENS:FUNC "CURR"')
-    inst.write('SENS:CURR:RANG 3.0; DET ACDC')
+    inst.write('SENS:CURR:RANG %.2E; DET ACDC' % ctx.maxcurrent)
     inst.write("SENS:SWE:POIN %s" % ctx.samples)
     inst.write("SENS:SWE:TINT %.2E" % ctx.interval)
     if ctx.triggered:
@@ -105,32 +88,20 @@ class SpecialCurrentMeasurer(core.OldMeasurer):
 class PowerCurrentMeasurer(core.BaseMeasurer):
 
   def __init__(self, ctx):
-    if ctx.datafiles.name:
-      ctx.datafiles.name = "%s-%s-%s" % (ctx.datafiles.name,
-          ctx.powersupplies.subsamples,
-          int(ctx.powersupplies.voltage * 100))
+    super(PowerCurrentMeasurer, self).__init__(ctx)
     self._device = ctx.environment.powersupply
     self.measuretime = self._device.Prepare(ctx)
+    self.datafile = reportcore.GetDatafile(ctx)
 
-  def Initialize(self, ctx):
-    assert ctx.powersupplies.voltage < 5.0 # we don't want to "smoke" the DUT.
-    self.datafile = flatfile.GetReport(ctx.datafiles.name, "G")
+  def Initialize(self):
     instrument = self._device
-    self._chargerstate = instrument.GetChargerOutputState()
-    instrument.SetChargerOutputState(False)
     instrument.write('SENS:FUNC "CURR"')
-    instrument.write('SENS:CURR:RANG 3.0; DET ACDC')
-    instrument.write("SENS:SWE:POIN %s" % ctx.powersupplies.subsamples)
-    instrument.write("SENS:SWE:TINT %.2E" % ctx.powersupplies.subsampleinterval)
-    headings = ("timestamp (s)",) + self._device.GetAllCurrentTextHeadings()
+    self.datafile.Initialize()
+    headings = ("timestamp (s)",) + instrument.GetAllCurrentTextHeadings()
     self.datafile.SetColumns(*headings)
 
   def Finalize(self):
-    self._device.SetChargerOutputState(self._chargerstate)
-    df = self.datafile
-    del self.datafile
-    df.Finalize()
-    df.close()
+    self.datafile.Finalize()
 
   def __call__(self, timestamp, oldvalue):
     rec = [repr(timestamp)]
@@ -138,4 +109,76 @@ class PowerCurrentMeasurer(core.BaseMeasurer):
     self.datafile.WriteTextRecord(*rec)
     return rec[1]
 
+
+class PowerSupplyChargeCurrentMeasurer(core.BaseMeasurer):
+
+  def __init__(self, ctx):
+    super(PowerSupplyChargeCurrentMeasurer, self).__init__(ctx)
+    self._device = ctx.environment.powersupply
+    ctx.powersupplies.voltage = 0.0
+    ctx.powersupplies.detector = "DC"
+    self.measuretime = self._device.Prepare(ctx)
+    self.datafile = reportcore.GetDatafile(ctx)
+
+  def Initialize(self):
+    instrument = self._device
+    instrument.write('SENS:FUNC "CURR"')
+    self.datafile.Initialize()
+    headings = ("timestamp (s)",) + instrument.GetAllCurrentTextHeadings()
+    self.datafile.SetColumns(*headings)
+
+  def Finalize(self):
+    self.datafile.Finalize()
+
+  def __call__(self, timestamp, oldvalue):
+    rec = [repr(timestamp)]
+    rec.extend(self._device.MeasureAllDCCurrentAsText())
+    self.datafile.WriteTextRecord(*rec)
+    return rec[1]
+
+
+class PowerVoltageMeasurer(core.BaseMeasurer):
+
+  def __init__(self, ctx):
+    super(PowerVoltageMeasurer, self).__init__(ctx)
+    self._device = ctx.environment.powersupply
+    self.datafile = reportcore.GetDatafile(ctx)
+
+  def Initialize(self):
+    instrument = self._device
+    #instrument.write('SENS:FUNC "VOLT"')
+    self.datafile.Initialize()
+    headings = ("timestamp (s)",) + instrument.GetVoltageHeadings()
+    self.datafile.SetColumns(*headings)
+
+  def Finalize(self):
+    self.datafile.Finalize()
+
+  def __call__(self, timestamp, oldvalue):
+    value = self._device.MeasureDCVoltage().value
+    self.datafile.WriteRecord(timestamp, value)
+    return value
+
+
+class CurrentMeasurer(core.BaseMeasurer):
+
+  def __init__(self, ctx):
+    super(CurrentMeasurer, self).__init__(ctx)
+    self._device = ctx.environment.currentmeter
+    self.measuretime = self._device.Prepare(ctx)
+    self.datafile = reportcore.GetDatafile(ctx)
+
+  def Initialize(self):
+    instrument = self._device
+    self.datafile.Initialize()
+    headings = ("timestamp (s)",) + instrument.GetCurrentHeadings()
+    self.datafile.SetColumns(*headings)
+
+  def Finalize(self):
+    self.datafile.Finalize()
+
+  def __call__(self, timestamp, oldvalue):
+    value = self._device.MeasureDCCurrent().value
+    self.datafile.WriteRecord(timestamp, value)
+    return value
 

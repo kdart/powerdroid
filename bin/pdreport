@@ -1,21 +1,8 @@
 #!/usr/bin/python2.4
 # -*- coding: us-ascii -*-
 # vim:ts=2:sw=2:softtabstop=0:tw=74:smarttab:expandtab
-
-# Copyright (C) 2008 The Android Open Source Project
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#      http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
+# Copyright The Android Open Source Project
 
 """Graph data from reports.
 
@@ -24,8 +11,8 @@
 __author__ = 'dart@google.com (Keith Dart)'
 
 import sys
-import getopt
 
+from pycopia import getopt
 from pycopia.aid import partial
 
 from droid import analyze
@@ -34,30 +21,94 @@ def main(argv):
   """Produce tables and charts of data files.
 
   Usage:
-    pdreport [-h?ad] [-m <mode>] [-b <battery> [-t <timepoint>,...] <datafile>...
+    pdreport [-h?aAdI] [-m <mode>] [-b <battery>] [-c <column>,...] 
+        [-r <interval>] [-t <timepoint>,...] [-l <legenddata>,...] [-n N]
+        [-e <eventsfile>] <datafile>...
 
   Options:
-    -m Mode: Graph, Histogram, Rollup-table, Summary-table, Battery-life,
-       Full-battery, Arve.
-    -t time points to limit domain of values. You can supply any
-       number of points, expressed as time values (e.g. 10s,1m,10m,1hr,24hr).
-    -a Also do Arve summary report when producing minute report.
-    -b Model name of battery used (default: EXCA160).
-    -r Rollup interval, for rollup table generation (timspec interval,
-        e.g. "1minute", "30sec", etc). Default is 1minute.
-    -c columns of data to plot, comma separated. Example: "1,4,5".
+    -m  Mode: Graph, Histogram, Rollup-table, Summary-table, Battery-life,
+        Full-battery, Arve.
+    -e  Event file name. Data file that contains event times to be
+        plotted.
+    -t  time points to limit domain of values. You can supply any
+        number of points, expressed as time values (e.g. 10s,1m,10m,1hr,24hr).
+    -b  Model name of battery used (default: DREA160).
+    -r  Rollup interval, for rollup table generation (timspec interval,
+         e.g. "1minute", "30sec", etc). Default is 1minute.
+    -c  columns of data to plot, comma separated. Example: "1,4,5".
+    -y  Y limits (min, max) for graphs.
+    -n  use N bins for histogram. Special value "d" means more detail in low 
+        range.
+    -l  Names of metadata to place in chart legend, comma separated. 
+        Example: "call,audio".
+    -I  Ignore errors in data.
 
-    -d Enable debugging.
-    -h This help text.
+    -a  Also do summary report when producing a rolled-up data file.
+    -A  Do autoscaling, if possible.
+    -d  Enable debugging.
+    -h  This help text.
+
+  Extra long-style options (e.g. --band=WCDMA) become additional, common
+  metadata for each data file. Used in commbination with the -l flag
+  enables you to place arbitrary text in chart titles.
+
+  Modes are:
+    Graph:
+      Produce a dot plot of the data file. This is usually a time-domain
+      data file.
+
+    Two:
+      Produce a dot plot of two data files, on two axes.
+
+    Histogram:
+      Produce a histogram plot of the data file.
+
+    Rollup-table:
+      Produce a new data file with time spans averaged (rolled up) into
+      another data file.
+
+    Summary:
+      Produce a text report with metadata and statistical data about the
+      data file.
+
+    Battery-life:
+      Produce a text report with battery life (possibly an estimate) from
+      the data file.
+
+    DCCharge:
+      Produce a text report with battery charge time. The data should have
+      been obtained with the DC detector measuring a charge cycle for at
+      least four hours.
+
+    Full-battery:
+      Produce a bar chart from several (on the command line) data files
+      for comparison. The bars show battery life.
+
+    Multi-battery:
+      Produce a bar chart from several (on the command line) data files
+      for comparison. The bars show battery life. Data with matching
+        metadata, selected by legend data, is grouped together.
+
+    Comparison:
+      Produce a bar chart from several builds. The state data will match
+      up per chart. The first data file defines the state for all files.
+      Those not matching will be filtered out.
+
   """
   mode = "S"
   timemarks = None
   columns = None
-  arve = False
+  bins = 2000
+  ylim = None
+  eventsfile = None
+  dosummary = False
+  strict = True
   battery = "DREA160"
   rollup = "1minute"
+  autoscale = False
+  legenddata = ["sync", "updates", "call", "audio"]
   try:
-    opts, args = getopt.getopt(argv[1:], "h?dam:t:b:c:r:")
+    opts, longopts, args = getopt.getopt(argv[1:], "h?daAIy:n:m:t:b:c:r:l:e:")
   except getopt.GetoptError, err:
     print >>sys.stderr, err
     return
@@ -70,34 +121,67 @@ def main(argv):
     elif opt == "-m":
       mode = optarg[0].upper()
     elif opt == "-a":
-      arve = True
+      dosummary = True
+    elif opt == "-A":
+      autoscale = True
+    elif opt == "-I":
+      strict = False
     elif opt == "-r":
       rollup = optarg
+    elif opt == "-e":
+      eventsfile = optarg
     elif opt == "-b":
       battery = optarg
+    elif opt == "-n":
+      bins = optarg
     elif opt == "-d":
       from pycopia import autodebug # sets up implied debugger
     elif opt == "-t":
-      timemarks = analyze.TimeMarksGenerator(optarg)
+      timemarks = optarg
     elif opt == "-c":
       columns = map(int, optarg.split(","))
+    elif opt == "-y":
+      ylim = tuple(map(float, optarg.split(",")))
+    elif opt == "-l":
+      legenddata = [s.strip() for s in optarg.split(",")]
 
   if mode == "G":
-    map(partial(analyze.DoGraph, timemarks=timemarks, columns=columns), args)
+    map(partial(
+        analyze.DoGraph, timemarks=timemarks, columns=columns, ylim=ylim,
+            eventsfile=eventsfile, autoscale=autoscale), args)
   if mode == "H":
-    map(partial(analyze.DoHistogram, timemarks=timemarks, columns=columns), args)
-  if mode == "C":
+    print analyze.PlotHistogram(args, timemarks=timemarks, columns=columns,
+        bins=bins, legenddata=legenddata, autoscale=autoscale)
+  if mode == "X":
     map(partial(analyze.DoCCDFChart, timemarks=timemarks), args)
   elif mode == "S":
     map(partial(analyze.DoSummary, timemarks=timemarks), args)
   elif mode == "R":
-    analyze.DoRollupTable(args, arve, rollup)
-  elif mode == "A":
-    map(partial(analyze.DoArveReport, timemarks=timemarks), args)
+    analyze.DoRollupTable(args, dosummary, rollup)
   elif mode == "B":
-    map(partial(analyze.DoBattery, timemarks=timemarks, battery=battery), args)
+    map(partial(analyze.DoBattery, 
+        timemarks=timemarks, battery=battery, strict=strict), args)
+  elif mode == "D":
+    map(partial(analyze.DoBatteryCharge, 
+        timemarks=timemarks, battery=battery, strict=strict), args)
+  elif mode == "T":
+    if len(args) >= 2:
+      analyze.DoTwoSetPlot(args[0], args[1], timemarks=timemarks,
+          ylim1=ylim, ylim2=ylim, autoscale=autoscale)
+    else:
+      print main.__doc__
   elif mode == "F":
-    analyze.DoFullBatteryChart(args, timemarks=timemarks, battery=battery)
+    analyze.DoFullBatteryChart(args, timemarks=timemarks, battery=battery,
+        autoscale=autoscale, legenddata=legenddata, extradata=longopts,
+        strict=strict)
+  elif mode == "M":
+    analyze.DoFullMultiBatteryChart(args, timemarks=timemarks, battery=battery,
+        autoscale=autoscale, legenddata=legenddata, extradata=longopts,
+        strict=strict)
+  elif mode == "C":
+    analyze.DoCrossBuildBatteryChart(args, timemarks=timemarks, battery=battery,
+        autoscale=autoscale, legenddata=legenddata, extradata=longopts,
+        strict=strict)
 
 main(sys.argv)
 

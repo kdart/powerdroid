@@ -1,22 +1,8 @@
 #!/usr/bin/python2.4
 # -*- coding: us-ascii -*-
 # vim:ts=2:sw=2:softtabstop=0:tw=74:smarttab:expandtab
-
-# Copyright (C) 2008 The Android Open Source Project
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#      http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-
+# Copyright Google Inc. All Rights Reserved.
 
 """Run tests from test specifications.
 
@@ -39,10 +25,17 @@ _MODEMAP = {
   "V": "droid.measure.voltage.VoltageMeasurer",
   "C": "droid.measure.current.PowerCurrentMeasurer",
   "A": "droid.measure.current.CurrentMeasurer",
+  "P": "droid.measure.core.TimeProgressMeter",
 }
 
-def ParseMeasureMode(mspec):
-  rv = []
+class MeasureSet(list):
+  def Add(self, measurer, period="N", frequency=None, delay=0.0,
+      runtime=None):
+    self.append([measurer, period, frequency, delay, runtime])
+
+
+def ParseMeasureMode(context, mspec):
+  rv = MeasureSet()
   parts = mspec.split(",")
   for part in parts:
     args, kwargs = ParseArgs(part)
@@ -57,9 +50,10 @@ def ParseMeasureMode(mspec):
         pass
       else:
         callargs[pos + 1] = arg
-    mclass = _MODEMAP.get(callargs[0][0].upper())
-    if mclass:
-      callargs[0] = mclass
+    classname = _MODEMAP.get(callargs[0][0].upper(), callargs[0])
+    mclass = module.GetObject(classname)
+    measurer = mclass(context)
+    callargs[0] = measurer
     rv.append(callargs)
   return rv
 
@@ -93,18 +87,15 @@ def RunSequencer(context, measureset):
   """
   seq = sequencer.Sequencer(context)
   for mspec in measureset:
-    mclass, period, frequency, delay, runtime = mspec
+    measurer, period, frequency, delay, runtime = mspec
     if delay is None:
       delay = 0.0
-    if type(mclass) is str:
-      mclass = module.GetObject(mclass)
-    measurer = mclass(context)
     if type(period) is str:
       specialmode = period[0].upper()
       if specialmode == "F": # fast mode
         seq.AddFunction(measurer, measurer.measuretime)
       elif specialmode in "ND": # normal or default, use default delay
-        seq.AddFunction(measurer, context.delay, None, delay, runtime)
+        seq.AddFunction(measurer, measurer.delaytime, None, delay, runtime)
       else: 
         seq.AddFunction(measurer, period, frequency, delay, runtime)
     else:
@@ -115,9 +106,5 @@ def RunSequencer(context, measureset):
     sequencer.Close()
 
 
-
-if __name__ == "__main__":
-  spec = ParseMeasureMode("voltage:30,current:fast,callcheck:60:delay=30")
-  print spec
 
 

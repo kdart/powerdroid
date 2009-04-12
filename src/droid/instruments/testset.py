@@ -1,22 +1,8 @@
 #!/usr/bin/python2.4
 # -*- coding: us-ascii -*-
 # vim:ts=2:sw=2:softtabstop=0:tw=74:smarttab:expandtab
-
-# Copyright (C) 2008 The Android Open Source Project
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#      http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-
+# Copyright The Android Open Source Project
 
 """Integrated test sets, or chassis.
 
@@ -31,7 +17,11 @@ from droid.instruments import core
 
 # operating modes
 OFF = "OFF"
-ON = "CELL" # They call it CELL to activate.
+ON = "CELL" # They call it CELL to activate. GSM mode.
+# cdma modes
+CALL = "CALL"
+CW = "CW"
+FDDT=  "FDDT"
 
 # BCH modes
 GSM = "GSM"
@@ -40,6 +30,85 @@ EGPRS = "EGPRS"
 
 class IntegrityError(Exception):
   pass
+
+
+DISTANCE_NAMES = {
+  # adjective[:3]   distance value
+  "min": "d0", # minimum
+  "nex": "d0", # next to
+  "clo": "d1", # close
+  "nea": "d2", # near
+  "nor": "d3", # normal (inflection point)
+  "cit": "d4", # city
+  "out": "d5", # outside
+  "med": "d6", # medium
+  "def": "d6", # default
+  "ins": "d7", # inside
+  "rur": "d15", # rural
+  "far": "d16", # far (inflection point)
+  "rem": "d17", # remote
+  "max": "d17", # maximum
+}
+
+DISTANCE_VALUES_PGSM = {
+  # distancevalue  (txpower (dBm), ms tx value (int))
+  "d0": (-60, 31),
+  "d1": (-62, 25),
+  "d2": (-64, 19),
+  "d3": (-66, 18),
+  "d4": (-68, 17),
+  "d5": (-70, 16),
+  "d6": (-72, 15),
+  "d7": (-74, 14),
+  "d8": (-76, 13),
+  "d9": (-78, 12),
+  "d10": (-80, 11),
+  "d11": (-82, 10),
+  "d12": (-84, 9),
+  "d13": (-86, 8),
+  "d14": (-88, 7),
+  "d15": (-90, 6),
+  "d16": (-92, 5),
+  "d17": (-94, 0),
+}
+
+DISTANCE_VALUES_PCS = {
+  # distancevalue  (txpower (dBm), ms tx value (int))
+  "d0": (-60, 31),
+  "d1": (-62, 30),
+  "d2": (-64, 15),
+  "d3": (-66, 14),
+  "d4": (-68, 13),
+  "d5": (-70, 12),
+  "d6": (-72, 11),
+  "d7": (-74, 10),
+  "d8": (-76, 9),
+  "d9": (-78, 8),
+  "d10": (-80, 7),
+  "d11": (-82, 6),
+  "d12": (-84, 5),
+  "d13": (-86, 4),
+  "d14": (-88, 3),
+  "d15": (-90, 2),
+  "d16": (-92, 1),
+  "d17": (-94, 0),
+}
+
+def GetDistanceValues(adjective, band):
+  table = {
+      "PCS": DISTANCE_VALUES_PCS,
+      "PGSM": DISTANCE_VALUES_PGSM,
+  }.get(band)
+  if table:
+    try:
+      return table[adjective]
+    except KeyError:
+      try:
+        return table[DISTANCE_NAMES[adjective.lower()[:3]]]
+      except KeyError:
+        raise ValueError("Invalid distance name: %r." % (adjective,))
+  else:
+    raise ValueError("Selected band %r not currently supported." % band)
 
 
 class PingReport(object):
@@ -121,6 +190,19 @@ class Measurer(TestSet):
   txpower = property(GetTXPower, SetTXPower, 
       doc="RF transmitter power in dBm")
 
+  def GetSetMSTransmitLevel(self):
+    return core.ValueCheck(self.ask("CALL:MS:TXL?"))
+
+  def SetSetMSTransmitLevel(self, mspower):
+    """Selects the TCH mobile station uplink power control level.
+    Range: 0 to 31, Resolution: 1
+    """
+    mspower = int(mspower)
+    assert mspower >=0 and mspower < 32, "MS TXL out of range."
+    self.write("CALL:MS:TXL %s" % mspower)
+
+  mstxlevel = property(GetSetMSTransmitLevel, SetSetMSTransmitLevel)
+
 
 class AudioGenerator(TestSet):
   pass
@@ -130,7 +212,7 @@ class AudioAnalyzer(TestSet):
   pass
 
 
-class Ag8960(TestSet):
+class BaseAg8960(TestSet):
   """The Agilent 8960 test set chassis."""
 
   # downlink audio modes
@@ -150,14 +232,6 @@ class Ag8960(TestSet):
   CONNECTION_ACKB = "ACKB"
   CONNECTION_BLER = "BLER"
   CONNECTION_SRBL = "SRBL"
-
-  def __str__(self):
-    s = [str(self.identify()).strip()]
-    s.append("   Application: %s" % self.GetCurrentApplication())
-    s.append("Operating mode: %s" % self.GetOperatingMode())
-    s.append("Data condition: %s" % self.GetDataCondition())
-    s.append("Call condition: %s" % self.GetCallCondition())
-    return "\n".join(s)
 
   def GetApplicationList(self):
     al = self.ask("SYST:APPL:CAT?")
@@ -203,6 +277,173 @@ class Ag8960(TestSet):
     self.write("CALL:END")
     self.CheckErrors()
 
+  def GetDataCondition(self):
+    return DataConditionRegister(self.ask("STAT:OPER:CALL:COMM:DATA:CONDITION?"))
+
+  datacondition = property(GetDataCondition)
+
+  def GetIPCounters(self):
+    raw = self.ask("CALL:COUN:MS:IP:ALL?")
+    return IPCountersReport(*core.ParseFloats(raw))
+
+  def GetCorruptBurstErrors(self):
+    """Queries the corrupt burst counter. The corrupt burst counter keeps
+    track of the number of uplink bursts where power was detected but the
+    expected midamble could not be found.
+    """
+    return int(self.ask("CALL:COUN:CBUR?"))
+
+  corrupt_bursts = property(GetCorruptBurstErrors)
+
+  def GetChannelDecodeErrors(self):
+    """Queries the channel decode error counter. The channel decode error
+    counter keeps track of how many channel decoder errors have occurred.
+    Channel decode errors include convolutional, FIRE, and block errors,
+    but not CRC errors.
+    """
+    return int(self.ask("CALL:COUN:CDER?"))
+
+  decode_errors = property(GetChannelDecodeErrors)
+
+  def IsPDPAttached(self):
+    return "PDP" == self.ask("CALL:STAT:DATA?").strip()
+
+  def IsCallActive(self):
+    rv = int(self.ask("CALL:CONN?"))
+    self.CheckErrors()
+    return rv
+
+  def IsAttached(self):
+    return core.GetBoolean(self.ask("CALL:ATT?"))
+
+  def GetIMEI(self):
+    return self.ask("CALL:MS:REP:IMEI?").strip()
+
+  IMEI = property(GetIMEI)
+
+  def GetIMSI(self):
+    return self.ask("CALL:MS:REP:IMSI?").strip()
+
+  IMSI = property(GetIMSI)
+
+  def ResetCounters(self):
+    self.write("SYST:MEAS:RESET")
+    self.write("CALL:COUN:CLE:ALL")
+    self.write("CALL:COUN:CLE:MS:IP")
+    self.CheckErrors()
+
+  def ClearScreen(self):
+    self.write("DISP:WIND:ERR:CLE")
+
+  def GetTXPower(self):
+    return core.ValueCheck(self.ask("CALL:POW?"))
+
+  def SetTXPower(self, power):
+    self.write("CALL:POW %f" % float(power))
+    self.CheckErrors()
+
+  txpower = property(GetTXPower, SetTXPower, 
+      doc="RF transmitter power in dBm")
+
+  def GetDataThroughputMeasurer(self):
+    return self.Clone(EDGEThroughputMeasurer)
+
+  def GetAudioGenerator(self):
+    return self.Clone(Ag8960AudioGenerator)
+
+  def GetAudioAnalyzer(self):
+    return self.Clone(Ag8960AudioAnalyzer)
+
+  def GetEGPRSBitErrorMeasurer(self):
+    return self.Clone(EGPRSBitErrorMeasurer)
+
+  def GetTransmitPowerMeasurer(self):
+    return self.Clone(TransmitPowerMeasurer)
+
+  def GetEGPRSTransmitPowerMeasurer(self):
+    return self.Clone(EGPRSTransmitPowerMeasurer)
+
+  def Prepare(self, measurecontext):
+    myctx = measurecontext.testsets
+    callplan = measurecontext.callplan
+    self.SetProfile(myctx.profile, measurecontext.SIM)
+    self.write("SYST:CORR:SGAIN %s" % ",".join(map(str,
+        [-measurecontext.measure.external_attenuation] * 20)))
+    self.write("CALL:ORIG:TIM +30")
+    self.write("DISP:WIND:ERR:CLE")
+    self.SetDownlinkAudio(myctx.downlinkaudio)
+    if callplan.include:
+      self.write("CALL:CPN:INCL INCL")
+      self.write('CALL:CPN "%s"' % callplan.orignumber)
+      self.write("CALL:CPN:PLAN %s" % callplan.plan.upper())
+      self.write("CALL:CPN:TYPE %s" % callplan.numbertype.upper())
+      self.write("CALL:CPN:PRES %s" % callplan.presentation.upper())
+      self.write("CALL:CPN:SCR %s" % callplan.screening.upper())
+    else:
+      self.write("CALL:CPN:INCL EXCL")
+    self.CheckErrors()
+    return 5.0
+
+
+class Ag8960GSM(BaseAg8960):
+  """ GSM/GPRS Lab App E """
+
+  # BCH modes
+  GSM = "GSM"
+  GPRS = "GPRS"
+  EGPRS = "EGPRS"
+
+  def __str__(self):
+    s = [str(self.identify()).strip()]
+    s.append("   Application: %s" % self.GetCurrentApplication())
+    s.append("Operating mode: %s" % self.GetOperatingMode())
+    s.append("Data condition: %s" % self.GetDataCondition())
+    s.append("Call condition: %s" % self.GetCallCondition())
+    return "\n".join(s)
+
+  def GetUSFBler(self):
+    raw = self.ask("CALL:STAT:PDTCH:USFB:ALL?")
+    return USFBlerReport(core.ParseFloats(raw))
+
+  usfbler = property(GetUSFBler)
+
+  def SetDownlinkAudio(self, audiomode):
+    """Set downlink audio source.
+
+    None means off, otherwise use AUDIO_* constants.
+    """
+    if audiomode is None:
+      audiomode = "NONE"
+    else:
+      audiomode = audiomode.upper()
+    if audiomode == "OFF": # avert a common error 8-o
+      audiomode = "NONE"
+    self.write("CALL:TCH:DOWN:SPE %s" % audiomode)
+    self.CheckErrors()
+
+  def GetDownlinkAudio(self):
+    return self.ask("CALL:TCH:DOWN:SPE?").strip()
+
+  downlinkaudio = property(GetDownlinkAudio, SetDownlinkAudio)
+
+  def GetSpeechEchoDelay(self):
+    return core.GetUnit(self.ask("CALL:TCH:DOWN:SPE:LOOP:DEL?"), "s")
+
+  def SetSpeechEchoDelay(self, value):
+    self.write("CALL:TCH:DOWN:SPE:LOOP:DEL %.2f" % float(value))
+
+  echo_delay = property(GetSpeechEchoDelay, SetSpeechEchoDelay)
+
+  def GetDualTransferModeState(self):
+    return bool(int(self.ask("CALL:CELL:DTM?")))
+
+  def SetDualTransferModeState(self, state):
+    self.write("CALL:CELL:DTM %s" % core.GetSCPIBoolean(state))
+    self.CheckErrors()
+
+  dual_transfer_mode = property(GetDualTransferModeState,
+      SetDualTransferModeState, doc="Dual Transfer Mode state")
+
   def SetOperatingMode(self, mode):
     assert isinstance(mode, str), "Operating mode must be mode string."
     mode = mode.upper()
@@ -244,87 +485,14 @@ class Ag8960(TestSet):
   connection_type = property(GetConnectionType, SetConnectionType)
 
   def GetMultiSlotConfig(self):
+    """Return a tuple of downlink and uplink channels."""
     raw = self.ask("CALL:PDTC:MSL:CONF?")
+    return int(raw[1]), int(raw[3])
 
-  def GetDataCondition(self):
-    return DataConditionRegister(self.ask("STAT:OPER:CALL:COMM:DATA:CONDITION?"))
-
-  datacondition = property(GetDataCondition)
-
-  def GetCallCondition(self):
-    return GSMConditionRegister(self.ask("STAT:OPER:CALL:GSM:CONDITION?"))
-
-  callcondition = property(GetCallCondition)
-
-    #"STAT:QUESTIONABLE:CALL:GPRS:CONDITION?"
-
-  def SetDownlinkAudio(self, audiomode):
-    """Set downlink audio source.
-
-    None means off, otherwise use AUDIO_* constants.
-    """
-    if audiomode is None:
-      audiomode = "NONE"
-    else:
-      audiomode = audiomode.upper()
-    if audiomode == "OFF": # avert a common error 8-o
-      audiomode = "NONE"
-    self.write("CALL:TCH:DOWN:SPE %s" % audiomode)
+  def SetMultiSlotConfig(self, downlinks=3, uplinks=2):
+    self.write("CALL:PDTC:MSL:CONF D%dU%d" % (downlinks, uplinks))
+    self.write("CALL:PDTC:DTM:MSL:CONF D%dU%d" % (downlinks, uplinks))
     self.CheckErrors()
-
-  def GetDownlinkAudio(self):
-    return self.ask("CALL:TCH:DOWN:SPE?").strip()
-
-  downlinkaudio = property(GetDownlinkAudio, SetDownlinkAudio)
-
-  def GetSpeechEchoDelay(self):
-    return core.GetUnit(self.ask("CALL:TCH:DOWN:SPE:LOOP:DEL?"), "s")
-
-  def SetSpeechEchoDelay(self, value):
-    self.write("CALL:TCH:DOWN:SPE:LOOP:DEL %.2f" % float(value))
-
-  echo_delay = property(GetSpeechEchoDelay, SetSpeechEchoDelay)
-
-  def GetIPCounters(self):
-    raw = self.ask("CALL:COUN:MS:IP:ALL?")
-    return IPCountersReport(*core.ParseFloats(raw))
-
-  def IsPDPAttached(self):
-    return "PDP" == self.ask("CALL:STAT:DATA?").strip()
-
-  def IsCallActive(self):
-    rv = int(self.ask("CALL:CONN?"))
-    self.CheckErrors()
-    return rv
-
-  def IsAttached(self):
-    return core.GetBoolean(self.ask("CALL:ATT?"))
-
-  def GetIMEI(self):
-    return self.ask("CALL:MS:REP:IMEI?").strip()
-
-  IMEI = property(GetIMEI)
-
-  def GetIMSI(self):
-    return self.ask("CALL:MS:REP:IMSI?").strip()
-
-  IMSI = property(GetIMSI)
-
-  def GetUSFBler(self):
-    raw = self.ask("CALL:STAT:PDTCH:USFB:ALL?")
-    return USFBlerReport(core.ParseFloats(raw))
-
-  usfbler = property(GetUSFBler)
-
-  def ResetCounters(self):
-    self.write("SYST:MEAS:RESET")
-
-  def GetMobileStationInfo(self):
-    msi = MobileStationInfo()
-    msi.update(self)
-    return msi
-
-  MS = property(GetMobileStationInfo)
 
   def GetOutputState(self):
     return bool(int(self.ask("CALL:CELL:POW:STAT:GSM?")))
@@ -336,73 +504,130 @@ class Ag8960(TestSet):
   outputstate = property(GetOutputState, SetOutputState, 
       doc="RF output state")
 
-  def GetTXPower(self):
-    return core.ValueCheck(self.ask("CALL:POW?"))
+  def GetCallCondition(self):
+    return GSMConditionRegister(self.ask("STAT:OPER:CALL:GSM:CONDITION?"))
 
-  def SetTXPower(self, power):
-    self.write("CALL:POW %f" % float(power))
+  callcondition = property(GetCallCondition)
+
+    #"STAT:QUESTIONABLE:CALL:GPRS:CONDITION?"
+
+  def Detach(self):
+    self.write("CALL:FUNC:DATA:DET")
     self.CheckErrors()
 
-  txpower = property(GetTXPower, SetTXPower, 
-      doc="RF transmitter power in dBm")
+  def SetNetwork(self, name):
+    networkmethod = {
+        "TES": self._PrepareNetwork0,
+        "T-M": self._PrepareNetwork2,
+        "TMO": self._PrepareNetwork2,
+        "PCS": self._PrepareNetwork1,
+      }.get(name.upper()[:3])
+    if not networkmethod:
+      raise ValueError("Bad network name")
+    networkmethod()
 
-  def DataThroughputMonitor(self):
-    pass # TODO(dart)
-
-  def ClearScreen(self):
-    self.write("DISP:WIND:ERR:CLE")
-
-  def Prepare(self, measurecontext):
-    myctx = measurecontext.testsets
-    callplan = measurecontext.callplan
-    self.SetProfile(myctx.profile, myctx.txpower)
-    self.write("CALL:ORIG:TIM +30")
-    self.write("DISP:WIND:ERR:CLE")
-    self.SetDownlinkAudio(myctx.downlinkaudio)
-    if callplan.include:
-      self.write("CALL:CPN:INCL INCL")
-      self.write('CALL:CPN "%s"' % callplan.orignumber)
-      self.write("CALL:CPN:PLAN %s" % callplan.plan.upper())
-      self.write("CALL:CPN:TYPE %s" % callplan.numbertype.upper())
-      self.write("CALL:CPN:PRES %s" % callplan.presentation.upper())
-      self.write("CALL:CPN:SCR %s" % callplan.screening.upper())
+  def DataConnection(self, state):
+    """Start or stop the data connection."""
+    if core.GetBoolean(state):
+      self.write("CALL:FUNC:DATA:STAR")
     else:
-      self.write("CALL:CPN:INCL EXCL")
+      self.write("CALL:FUNC:DATA:STOP")
     self.CheckErrors()
-    return 5.0
 
-  def SetProfile(self, name, txpower=-75.0):
-    profilemethod = {
-      "GSM": self._PrepareProfile0,
-      "GPRS": self._PrepareProfile1,
-      "EGPRS": self._PrepareProfile2,
-      "EDGE": self._PrepareProfile3,
-      "EDGE_PBC": self._PrepareProfile4,
-      "EDGEHP": self._PrepareProfileX}.get(name.upper())
-    if not profilemethod:
-      raise ValueError("Bad profile number for testset")
-    self.Reset()
-    self.ClearErrors()
-    self.write("CALL:CELL:OPER:MODE OFF")
-    self.write("DISP:WIND:ERR:CLE")
-    self.write("SYST:MEAS:RESET")
-    # common settings that differ from reset mode.
-    self.write("CALL:POW %s" % txpower) # dBm
-    self.write("CALL:LAC +1")
-    self.write("CALL:MCC +1")
-    self.write("CALL:MNC +1")
-    self.write("CALL:BCC +5")
+  def SetMSQualityOfService(self, profile, ipindex=1):
+    profile = "QOSP%d" % (int(profile),)
+    cmd = "CALL:MS:IP:ADDR%d:CONT:PRIM:QOS %s" % (ipindex, profile)
+    self.write(cmd)
+    self.CheckErrors()
+
+  def GetMSQualityOfService(self, address=1):
+    cmd = "CALL:MS:IP:ADDR%d:CONT:PRIM:QOS?" % (address,)
+    raw = self.ask(cmd)
+    self.CheckErrors()
+    return int(raw[-2])
+
+  def SetPersistentAttach(self, state):
+    self.write("CALL:MS:PATT:STAT %s" % core.GetSCPIBoolean(state))
+    self.CheckErrors()
+
+  def GetPersistentAttach(self):
+    return core.GetBoolean(self.ask("CALL:MS:PATT:STAT?"))
+
+  persistentattach = property(GetPersistentAttach, SetPersistentAttach)
+
+  def _PrepareNetwork0(self):
+    """Settings for Agilent testing SIM."""
     self.write("CALL:BAND PGSM")
     self.write("CALL:TCH:BAND PGSM")
     self.write("CALL:PDTCH:BAND PGSM")
     self.write("CALL:PDTCH:DTM:BAND PGSM")
-    self.write("CALL:BCH:TYPE COMB")
+    self.write("CALL:LAC +1")
+    self.write("CALL:MCC +1") # Test SIM
+    self.write("CALL:MNC +1")
+    self.write("CALL:G850MNC:STAT 0")
+    self.write("CALL:PMNC:STAT 0")
+    self.write("CALL:RAC +1")
+    self.write("CALL:BCC +5")
+    self.write("CALL:BCH:CID +1")
     self.write("CALL:BCH:ARFCN +20")
     self.write("CALL:TCH:ARFCN +30")
-    self.write("CALL:PDTCH:ARFCN +30")
+    self.write("CALL:PDTCH:ARFCN +31")
+
+  def _PrepareNetwork1(self):
+    """Settings for T-Mobile SIM (PCS)."""
+    self.write("CALL:BAND PCS")
+    self.write("CALL:TCH:BAND PCS")
+    self.write("CALL:PDTCH:BAND PCS")
+    self.write("CALL:PDTCH:DTM:BAND PCS")
+    self.write("CALL:LAC +113")
+    self.write("CALL:MCC +310") # USA
+    self.write("CALL:MNC +26")
+    self.write("CALL:PMNC:VAL +260") # T-Mobile
+    self.write("CALL:PMNC:STAT 1")
+    self.write("CALL:RAC +1")
+    self.write("CALL:BCC +5")
+    self.write("CALL:BCH:CID +43721")
+    self.write("CALL:BCH:ARFCN +512")
+    self.write("CALL:TCH:ARFCN +698")
+    self.write("CALL:PDTCH:ARFCN +699")
+
+  def _PrepareNetwork2(self):
+    """Settings for T-Mobile SIM (GSM)."""
+    self.write("CALL:BAND PGSM")
+    self.write("CALL:TCH:BAND PGSM")
+    self.write("CALL:PDTCH:BAND PGSM")
+    self.write("CALL:PDTCH:DTM:BAND PGSM")
+    self.write("CALL:LAC +113")
+    self.write("CALL:MCC +310")
+    self.write("CALL:MNC +26") # T - mobile
+    self.write("CALL:RAC +1")
+    self.write("CALL:BCC +5")
+    self.write("CALL:BCH:CID +43721")
+    self.write("CALL:BCH:ARFCN +20")
+    self.write("CALL:TCH:ARFCN +30")
+    self.write("CALL:PDTCH:ARFCN +31")
+
+  def SetProfile(self, name, netname):
+    profilemethod = {
+      "GSM": self._PrepareProfile0,
+      "GSM_FAR": self._PrepareProfile0far,
+      "GPRS": self._PrepareProfile1,
+      "EGPRS": self._PrepareProfile2,
+      "EDGE": self._PrepareProfile3,
+      "EDGE_NEAR": self._PrepareProfile3near,
+      "EDGE_FAR": self._PrepareProfile3far,
+      "EDGE_PBC": self._PrepareProfile4}.get(name.upper())
+    if not profilemethod:
+      raise ValueError("Bad profile name for testset")
+    self.Reset()
+    self.ClearErrors()
+    self.write("CALL:CELL:OPER:MODE OFF")
+    self.write("DISP:WIND:ERR:CLE")
+    self.write("CALL:CELL:DTM 0")
+    self.write("SYST:MEAS:RESET")
+    self.write("CALL:BCH:TYPE COMB")
     self.write("CALL:PBCCH 0")
     # power control
-    self.write("CALL:MS:TXL +25") # not default, but saves power.
     self.write("CALL:PDTCH:PZER:LEV 0")
 #    self.write("CALL:PDTCH:PRED:MODE A")
     self.write("CALL:PDTCH:PRED:LEV1 0")
@@ -413,15 +638,12 @@ class Ag8960(TestSet):
     self.write("CALL:PDTCH:PRED:BURS4 PRL1")
     self.write("CALL:PDTCH:PRED:BURS5 PRL1")
 #    self.write("CALL:PDTCH:PRED:UNUS OFF") # PRL1 PRL2
-    self.write("CALL:PDTCH:MS:TXL:BURS1 15")
-    self.write("CALL:PDTCH:MS:TXL:BURS2 15")
-    self.write("CALL:PDTCH:MS:TXL:BURS3 15")
-    self.write("CALL:PDTCH:MS:TXL:BURS4 15")
     # timing
     self.write("CALL:MS:TADV +0")
     self.write("CALL:ORIG:TIM 10")
 #    self.write("CALL:CELL:TBFLOW:T3192 MS500")
     self.write("CALL:TBFL:UPL:EXT OFF")
+    self.SetNetwork(netname)
     profilemethod()
     self.CheckErrors()
     self.write("CALL:CELL:POW:STAT:GSM 1")
@@ -431,23 +653,52 @@ class Ag8960(TestSet):
   def _PrepareProfile0(self):
     """GSM"""
     # cell id indicates profile to operator
-    self.write("CALL:BCH:CID +0")
+    self.SetDistance("normal")
+    self.write("CALL:CELL:BCH:SCEL GSM")
+    self.write("CALL:BCH:MS:TXL +0")
+
+  def _PrepareProfile0far(self):
+    """GSM far away"""
+    # cell id indicates profile to operator
+    self.SetDistance("far")
     self.write("CALL:CELL:BCH:SCEL GSM")
     self.write("CALL:BCH:MS:TXL +0")
 
   def _PrepareProfile1(self):
     """GPRS"""
-    self.write("CALL:BCH:CID +1")
+    self.SetDistance("normal")
     self.write("CALL:CELL:BCH:SCEL GPRS")
 
   def _PrepareProfile2(self):
     """EGPRS"""
-    self.write("CALL:BCH:CID +2")
+    self.SetDistance("normal")
     self.write("CALL:CELL:BCH:SCEL EGPRS")
 
   def _PrepareProfile3(self):
-    """EGPRS / EDGE"""
-    self.write("CALL:BCH:CID +3")
+    """EGPRS / EDGE """
+    self.SetDistance("normal")
+    self.write("CALL:CELL:BCH:SCEL EGPRS")
+    self.write("CALL:PDTC:MSL:FIRS:DOWN:LOOP +1")
+    self.write("CALL:PDTC:DTM:MCSC MCS8,MCS8")
+    self.write("CALL:PDTC:DTM:MSL:CONF D3U2")
+    self.write("CALL:PDTC:MCSC MCS8,MCS8")
+    self.write("CALL:PDTC:MCSC:PSCH PS1")
+    self.write("CALL:PDTC:MSL:CONF D3U2")
+
+  def _PrepareProfile3near(self):
+    """EGPRS / EDGE NEAR"""
+    self.SetDistance("near")
+    self.write("CALL:CELL:BCH:SCEL EGPRS")
+    self.write("CALL:PDTC:MSL:FIRS:DOWN:LOOP +1")
+    self.write("CALL:PDTC:DTM:MCSC MCS8,MCS8")
+    self.write("CALL:PDTC:DTM:MSL:CONF D3U2")
+    self.write("CALL:PDTC:MCSC MCS8,MCS8")
+    self.write("CALL:PDTC:MCSC:PSCH PS1")
+    self.write("CALL:PDTC:MSL:CONF D3U2")
+
+  def _PrepareProfile3far(self):
+    """EGPRS / EDGE FAR"""
+    self.SetDistance("far")
     self.write("CALL:CELL:BCH:SCEL EGPRS")
     self.write("CALL:PDTC:MSL:FIRS:DOWN:LOOP +1")
     self.write("CALL:PDTC:DTM:MCSC MCS8,MCS8")
@@ -457,8 +708,8 @@ class Ag8960(TestSet):
     self.write("CALL:PDTC:MSL:CONF D3U2")
 
   def _PrepareProfile4(self):
-    """EGPRS / EDGE with PBC"""
-    self.write("CALL:BCH:CID +4")
+    """EGPRS / EDGE with packet broadcast control channel"""
+    self.SetDistance("normal")
     self.write("CALL:CELL:BCH:SCEL EGPRS")
     self.write("CALL:PDTC:MSL:FIRS:DOWN:LOOP +1")
     self.write("CALL:PDTC:DTM:MCSC MCS8,MCS8")
@@ -469,33 +720,77 @@ class Ag8960(TestSet):
     self.write("CALL:PBCCH 1")
     self.write("CALL:PBCCH:MS:TXL +0")
 
-  def _PrepareProfileX(self):
-    """EGPRS / EDGE with higher power uplink.
+#  def _PrepareProfileX(self):
+#    """EGPRS / EDGE with higher power uplink.
+#
+#    This simulates being distant from a cell, but it just kills battery
+#    life.
+#    """
+#    self.SetDistance("far")
+#    self.write("CALL:BCH:CID +99")
+#    self.write("CALL:CELL:BCH:SCEL EGPRS")
+#    self.write("CALL:PDTC:DTM:CSW:MS:TXL +5")
+#    self.write("CALL:PDTC:DTM:MS:TXL:BURS1 +5")
+#    self.write("CALL:PDTC:DTM:MS:TXL:BURS2 +5")
+#    self.write("CALL:PDTC:MS:TXL:BURS1 +5")
+#    self.write("CALL:PDTC:MS:TXL:BURS2 +5")
+#    self.write("CALL:TCH:TSL +5")
+#    self.write("CALL:PDTC:MSL:FIRS:DOWN:LOOP +1")
+#    self.write("CALL:PDTC:DTM:MCSC MCS8,MCS8")
+#    self.write("CALL:PDTC:DTM:MSL:CONF D3U2")
+#    self.write("CALL:PDTC:MCSC MCS8,MCS8")
+#    self.write("CALL:PDTC:MCSC:PSCH PS1")
+#    self.write("CALL:PDTC:MSL:CONF D3U2")
 
-    This simulates being distant from a cell, but it just kills battery
-    life.
+  def SetDistance(self, adjective):
+    band = self.ask("CALL:BAND?").strip()
+    txpower, mspower = GetDistanceValues(adjective, band)
+    self.write("CALL:POW %s" % txpower)
+    self.write("CALL:MS:TXL %s" % mspower) # voice channel
+    self.write("CALL:PDTCH:MS:TXL:BURS1 %s" % mspower) # data channels
+    self.write("CALL:PDTCH:MS:TXL:BURS2 %s" % mspower)
+    self.write("CALL:PDTCH:MS:TXL:BURS3 %s" % mspower)
+    self.write("CALL:PDTCH:MS:TXL:BURS4 %s" % mspower)
+
+  def GetSetMSTransmitLevel(self):
+    return core.ValueCheck(self.ask("CALL:MS:TXL?"))
+
+  def SetSetMSTransmitLevel(self, mspower):
+    """Selects the TCH mobile station uplink power control level.
+    Range: 0 to 31, Resolution: 1
     """
-    self.write("CALL:BCH:CID +99")
-    self.write("CALL:CELL:BCH:SCEL EGPRS")
-    self.write("CALL:MS:TXL +5")
-    self.write("CALL:PDTC:DTM:CSW:MS:TXL +5")
-    self.write("CALL:PDTC:DTM:MS:TXL:BURS1 +5")
-    self.write("CALL:PDTC:DTM:MS:TXL:BURS2 +5")
-    self.write("CALL:PDTC:MS:TXL:BURS1 +5")
-    self.write("CALL:PDTC:MS:TXL:BURS2 +5")
-    self.write("CALL:TCH:TSL +5")
-    self.write("CALL:PDTC:MSL:FIRS:DOWN:LOOP +1")
-    self.write("CALL:PDTC:DTM:MCSC MCS8,MCS8")
-    self.write("CALL:PDTC:DTM:MSL:CONF D3U2")
-    self.write("CALL:PDTC:MCSC MCS8,MCS8")
-    self.write("CALL:PDTC:MCSC:PSCH PS1")
-    self.write("CALL:PDTC:MSL:CONF D3U2")
+    mspower = int(mspower)
+    assert mspower >=0 and mspower < 32, "MS TXL out of range."
+    self.write("CALL:MS:TXL %s" % mspower)
 
-  def GetAudioGenerator(self):
-    return self.Clone(Ag8960AudioGenerator)
+  mstxlevel = property(GetSetMSTransmitLevel, SetSetMSTransmitLevel)
 
-  def GetAudioAnalyzer(self):
-    return self.Clone(Ag8960AudioAnalyzer)
+  def GetSetMSDataTransmitLevel(self):
+    b1 = core.ValueCheck(self.ask("CALL:PDTCH:MS:TXL:BURS1?"))
+    b2 = core.ValueCheck(self.ask("CALL:PDTCH:MS:TXL:BURS2?"))
+    b3 = core.ValueCheck(self.ask("CALL:PDTCH:MS:TXL:BURS3?"))
+    b4 = core.ValueCheck(self.ask("CALL:PDTCH:MS:TXL:BURS4?"))
+    return b1, b2, b3, b4
+
+  def SetSetMSDataTransmitLevel(self, pdlevels):
+    """Selects the PDTCH mobile station uplink power control level.
+
+    Range: 0 to 31, Resolution: 1
+
+    Args:
+      pdlevels: list of PDTCH power levels, up to 4 values.
+    """
+    for i, level in enumerate(map(int, pdlevels)):
+      self.write("CALL:PDTCH:MS:TXL:BURS%s %s" % (i + 1, level))
+
+  msdatatxlevel = property(GetSetMSDataTransmitLevel, SetSetMSDataTransmitLevel)
+
+  def GetMobileStationInfo(self):
+    msi = MobileStationInfo()
+    msi.update(self)
+    return msi
+
+  MS = property(GetMobileStationInfo)
 
   def GetMultitoneAudioGenerator(self):
     return self.Clone(Ag8960MultitoneAudioGenerator)
@@ -503,8 +798,84 @@ class Ag8960(TestSet):
   def GetMultitoneAudioAnalyzer(self):
     return self.Clone(Ag8960MultitoneAudioAnalyzer)
 
-  def GetEGPRSBitErrorMeasurer(self):
-    return self.Clone(EGPRSBitErrorMeasurer)
+
+class Ag8960WCDMA(BaseAg8960):
+  """GSM/GPRS_WCDMA Lab App"""
+
+  def __str__(self):
+    s = [str(self.identify()).strip()]
+    s.append("   Application: %s" % self.GetCurrentApplication())
+    return "\n".join(s)
+
+  def SetOperatingMode(self, mode):
+    assert isinstance(mode, str), "Operating mode must be mode string."
+    mode = mode.upper()
+    if mode not in (CALL, CW, FDDT, OFF):
+      raise ValueError("Improper operating mode string.")
+    currentmode = self.GetOperatingMode()
+    if mode == currentmode:
+      return currentmode # Do nothing if requesting current mode.
+    self.write("CALL:OPER:MODE OFF")
+    if mode != OFF:
+      self.write("CALL:OPER:MODE %s" % mode)
+    self.CheckErrors()
+    return currentmode
+
+  def GetOperatingMode(self):
+    return self.ask("CALL:OPER:MODE?").strip().upper()
+
+  operatingmode = property(GetOperatingMode, SetOperatingMode)
+
+  def SetProfile(self, name, netname):
+    profilemethod = {
+      "CDMA": self._PrepareProfile0,
+      "CDMA_FAR": self._PrepareProfile0far}.get(name.upper())
+    if not profilemethod:
+      raise ValueError("Bad profile name for testset")
+    self.Reset()
+    self.ClearErrors()
+    # XXX
+    self.SetNetwork(netname)
+    profilemethod()
+    self.CheckErrors()
+
+  def SetNetwork(self, name):
+    networkmethod = {
+        "TES": self._PrepareNetwork0,
+      }.get(name.upper()[:3])
+    if not networkmethod:
+      raise ValueError("Bad network name")
+    networkmethod()
+
+  def _PrepareProfile0(self):
+    """CDMA"""
+    # cell id indicates profile to operator
+    self.SetDistance("normal")
+
+  def _PrepareProfile0far(self):
+    """CDMA far away"""
+    # cell id indicates profile to operator
+    self.SetDistance("far")
+
+  def _PrepareNetwork0(self):
+    """Settings for Agilent testing SIM."""
+# XXX
+    self.write("CALL:LAC +1")
+    self.write("CALL:MCC +1") # Test SIM
+    self.write("CALL:MNC +1")
+    self.write("CALL:RAC +1")
+    self.write("CALL:BCC +5")
+
+  def SetDistance(self, adjective):
+    band = self.ask("CALL:BAND?").strip()
+    txpower, mspower = GetDistanceValues(adjective, band)
+    self.write("CALL:POW %s" % txpower)
+    self.write("CALL:MS:TXL %s" % mspower) # voice channel
+    self.write("CALL:PDTCH:MS:TXL:BURS1 %s" % mspower) # data channels
+    self.write("CALL:PDTCH:MS:TXL:BURS2 %s" % mspower)
+    self.write("CALL:PDTCH:MS:TXL:BURS3 %s" % mspower)
+    self.write("CALL:PDTCH:MS:TXL:BURS4 %s" % mspower)
+
 
 
 class MobileStationInfo(object):
@@ -2312,6 +2683,95 @@ class N4010aAudioAnalyzer(AudioAnalyzer):
   sinad = property(GetSINAD)
 
 
+class EDGEThroughputMeasurer(Measurer):
+
+  TRACE_IPRX = "IPRX"
+  TRACE_IPTX = "IPTX"
+  TRACE_OTARX = "OTARX"
+  TRACE_OTATX = "OTATX"
+
+  def Prepare(self, context):
+    self.Clear()
+
+  def Clear(self):
+    self.write("CALL:COUN:DTM:CLE")
+
+  def SetDisplayRange(self, lower, upper):
+    """Set display range to (Y axis) for the graphical display.
+
+    Args:
+      lower (int) lower value of Y axis, in kbps.
+      upper (int) upper value of Y axis, in kbps.
+    """
+    self.write("CALL:COUN:DTM:ALL:DISP:DRAT:STAR %s" % int(lower))
+    self.write("CALL:COUN:DTM:ALL:DISP:DRAT:STOP %s" % int(upper))
+    self.CheckErrors()
+
+  def GetDisplayRange(self):
+    lower = int(self.ask("CALL:COUN:DTM:ALL:DISP:DRAT:STAR?"))
+    upper = int(self.ask("CALL:COUN:DTM:ALL:DISP:DRAT:STOP?"))
+    return lower, upper
+
+  def SetDisplaySpan(self, timespan):
+    """Sets the time span (X axis) for the graphical display.
+
+    Args:
+      timespan (int) the time span value, in seconds. Range is 5 to 600
+      seconds.
+    """
+    self.write("CALL:COUN:DTM:ALL:DISP:SPAN:TIME %s" % int(timespan))
+    self.CheckErrors()
+
+  def GetDisplaySpan(self):
+    return int(self.ask("CALL:COUN:DTM:ALL:DISP:SPAN:TIME?"))
+
+  display_span = property(GetDisplaySpan, SetDisplaySpan)
+
+  def GetTracePeriods(self):
+    return core.ValueCheck(self.ask("CALL:COUN:DTM:TRAC:HIST:UNUM?"))
+
+  def GetDataRate(self, trace):
+    """Return a ThroughputReport for a network layer trace.
+
+    Args:
+      trace (string) one of:
+    Returns:
+      ThroughputReport containing:
+        Average data throughput (bps)
+        Current data throughput (bps)
+        Peak data throughput (bps)
+        Total data transfer (bytes)
+    """
+    cl = EDGEThroughputMeasurer
+    assert trace in (
+        cl.TRACE_IPRX, cl.TRACE_IPTX, cl.TRACE_OTARX, cl.TRACE_OTATX)
+    avg, curr, peak, tot = core.ParseFloats(
+        self.ask("CALL:COUN:DTM:%s:DRAT?" % trace))
+    return ThroughputReport(
+        core.PQ(avg, "b/s"), 
+        core.PQ(curr, "b/s"), 
+        core.PQ(peak, "b/s"),
+        core.PQ(tot, "B"),
+        trace,
+        )
+
+
+class ThroughputReport(object):
+  def __init__(self, average, current, peak, total, trace):
+    self.average = average
+    self.current = current
+    self.peak = peak
+    self.total_bytes = total
+    self.trace = trace
+
+  def __str__(self):
+    s = ["Data throughput for trace %r:" % (self.trace,)]
+    s.append(" Average: %s" % (self.average,))
+    s.append(" Current: %s" % (self.current,))
+    s.append("    Peak: %s" % (self.peak,))
+    s.append("   Total: %s" % (self.total_bytes,))
+    return "\n".join(s)
+
 
 class EGPRSBitErrorMeasurer(Measurer):
   """Performs an EGPRS Switched Radio Block (SRB) loopback BER measurement."""
@@ -2408,14 +2868,10 @@ class EGPRSBitErrorMeasurer(Measurer):
       raise IntegrityError, integrity
 
   def Finish(self):
-#    self.write("CALL:CELL:OPER:MODE OFF")
     self.write("CALL:FUNC:DATA:STOP")
     self.write("CALL:FUNC:CONN:TYPE AUTO")
     self.write("CALL:PDTC:DTM:MSL:CONF %s; CALL:PDTC:MSL:CONF %s" % self._channels)
-#    self.write("CALL:PDTC:DTM:MSL:CONF %s" % self._channels[0])
-#    self.write("CALL:PDTC:MSL:CONF %s" % self._channels[1])
     self.write("CALL:POW %f" % self._oldpower)
-#    self.write("CALL:CELL:OPER:MODE CELL")
     self.CheckErrors()
 
   def GetBitCount(self):
@@ -2497,4 +2953,352 @@ class BitErrorReport(object):
         self.error_ratio, self.error_count, self.bits_tested)
 
 
+
+class EGPRSTransmitPowerMeasurer(Measurer):
+
+  TRIGGER_AUTO = "AUTO"
+  TRIGGER_PROTOCOL = "PROT"
+  TRIGGER_RISE = "RISE"
+  TRIGGER_IMMEDIATE = "IMM"
+
+  BURST_CAPTURE_SINGLE = "SING"
+  BURST_CAPTURE_ALL = "ALL"
+
+  def __str__(self):
+    s = ["EGPRS Transmit power measurement settings:"]
+    s.append("    Use est. power?: %s" % GetEstimatedPowerState())
+    useto = self.GetMeasureTimeoutState()
+    s.append("       Use timeout?: %s" % useto)
+    if useto:
+      s.append("    Measure timeout: %s" % self.GetMeasureTimeout())
+    s.append("     trigger source: %s" % self.GetTriggerSource())
+    s.append("      trigger delay: %s" % self.GetTriggerDelay())
+    s.append("        Continuous?: %s" % self.GetMeasureContinuous())
+    ms = self.GetMultiState()
+    s.append(" Multi-measurement?: %s" % ms)
+    if ms:
+      s.append("      measure-count: %s" % self.GetMeasureCount())
+    return "\n".join(s)
+
+  def GetMeasureCount(self):
+    return int(self.ask("SET:ETXP:COUNT:NUMB?"))
+
+  def SetMeasureCount(self, count):
+    if count:
+      self.write("SET:ETXP:COUNT:NUMB %s" % count)
+      self.SetMultiState(True)
+    else:
+      self.SetMultiState(False)
+
+  measure_count = property(GetMeasureCount, SetMeasureCount)
+
+  def GetMultiState(self):
+    return bool(int(self.ask("SET:ETXP:COUNT:STAT?")))
+
+  def SetMultiState(self, state):
+    self.write("SET:ETXP:COUNT:STAT %s" % core.GetSCPIBoolean(state))
+    self.CheckErrors()
+
+  multi_state = property(GetMultiState, SetMultiState)
+
+  def GetMeasureTimeout(self):
+    return core.ValueCheck(self.ask("SET:ETXP:TIM:TIME?"))
+
+  def SetMeasureTimeout(self, value):
+    self.write("SET:ETXP:TIM:TIME %s" % value)
+
+  measure_timeout = property(GetMeasureTimeout,
+      SetMeasureTimeout)
+
+  def GetMeasureTimeoutState(self):
+    return bool(int(self.ask("SET:ETXP:TIM:STAT?")))
+
+  def SetMeasureTimeoutState(self, state):
+    self.write("SET:ETXP:TIM:STAT %s" % core.GetSCPIBoolean(state))
+
+  measure_timeout_state = property(GetMeasureTimeoutState,
+      SetMeasureTimeoutState)
+
+  def GetMeasureContinuous(self):
+    return bool(int(self.ask("SET:ETXP:CONT?")))
+
+  def SetMeasureContinuous(self, state):
+    self.write("SET:ETXP:CONT %s" % core.GetSCPIBoolean(state))
+    self.CheckErrors()
+
+  continuous = property(GetMeasureContinuous, SetMeasureContinuous)
+
+  def GetTriggerSource(self):
+    return self.ask("SET:ETXP:TRIG:SOUR?").strip()
+
+  def SetTriggerSource(self, source):
+    """Set to one of the TRIGGER_* values."""
+    self.write("SET:ETXP:TRIG:SOUR %s" % source)
+
+  trigger_source = property(GetTriggerSource, SetTriggerSource)
+
+  def GetTriggerDelay(self):
+    return core.GetUnit(self.ask("SET:ETXP:TRIG:DEL?"), "s")
+
+  def SetTriggerDelay(self, delay):
+    self.write("SET:ETXP:TRIG:DEL %s" % delay)
+
+  trigger_delay = property(GetTriggerDelay, SetTriggerDelay)
+
+  def GetEstimatedPowerState(self):
+    """Queries the EGPRS TX power estimated carrier power state."""
+    return bool(int(self.ask("SET:ETXP:ECP:STAT?")))
+
+  def SetEstimatedPowerState(self, state):
+    """Sets the EGPRS TX power estimated carrier power state.
+
+    When set to ON and the modulation format is set to 8PSK, the
+    estimated carrier power measurement is calculated.
+
+    When set to OFF and the modulation format is set to 8PSK, the
+    estimated carrier power measurement is not calculated. The power
+    measurement completes in a shorter time when this command is set to
+    OFF.
+
+    If the modulation format is set to GMSK, only the transmit power value
+    is displayed on the test set's front panel, and the transmit power is
+    returned via GPIB when the estimated carrier power result is queried.
+    """
+    self.write("SET:ETXP:ECP:STAT %s" % core.GetSCPIBoolean(state))
+    self.CheckErrors()
+
+  estimated_power_state = property(GetEstimatedPowerState,
+      SetEstimatedPowerState)
+
+  def GetBurstCapture(self):
+    return self.ask("SET:TXP:BURST:CAPT?").strip()
+
+  def SetBurstCapture(self, value):
+    """Set to one of BURST_CAPTURE_* values."""
+    self.write("SET:TXP:BURST:CAPT %s" % value.upper())
+    self.CheckErrors()
+
+  burst_capture = property(GetBurstCapture, SetBurstCapture)
+
+  def Prepare(self, context):
+    measctx = context.measure
+    self.ClearErrors()
+    if measctx.timeout >= 0:
+      self.SetMeasureTimeout(measctx.timeout)
+      self.SetMeasureTimeoutState(True)
+    else:
+      self.SetMeasureTimeoutState(False)
+    myctx = measctx.transmitpower
+    self.SetBurstCapture(myctx.burstcapture)
+    self.SetEstimatedPowerState(myctx.estimated_power)
+    self.SetMeasureContinuous(measctx.continuous)
+
+  def Perform(self):
+    self.write("INIT:ETXP")
+    raw = self.ask("FETCH:ETXP?")
+    self.CheckErrors()
+    integrity, burst_power, estimated_power = raw.split(",")
+    integrity = IntegrityIndicator(integrity)
+    if integrity:
+      return EGPRSTransmitPowerReport(burst_power, estimated_power)
+    else:
+      raise IntegrityError, integrity
+
+
+class EGPRSTransmitPowerReport(object):
+  def __init__(self, burst_power, estimated_power):
+    self.burst_power = core.ValueCheck(burst_power)
+    self.estimated_power = core.ValueCheck(estimated_power)
+
+  def __str__(self):
+    return "EGPRS TX Power:\n burst power: %s dBm\n estimated: %s dBm" % (
+        self.burst_power, self.estimated_power)
+
+
+class TransmitPowerMeasurer(Measurer):
+
+  TRIGGER_AUTO = "AUTO"
+  TRIGGER_PROTOCOL = "PROT"
+  TRIGGER_RISE = "RISE"
+  TRIGGER_IMMEDIATE = "IMM"
+  TRIGGER_EXTERNAL = "EXT"
+
+  BURST_CAPTURE_SINGLE = "SING"
+  BURST_CAPTURE_ALL = "ALL"
+
+  def __str__(self):
+    s = ["Transmit power measurement settings:"]
+    s.append(" Burst capture mode: %s" % self.GetBurstCapture())
+    s.append("         estimated?: %s" % self.GetEstimatedPowerState())
+    s.append("   Frame qualifier?: %s" % self.GetFrameQualifier())
+    useto = self.GetMeasureTimeoutState()
+    s.append("       Use timeout?: %s" % useto)
+    if useto:
+      s.append("    Measure timeout: %s" % self.GetMeasureTimeout())
+    s.append("     trigger source: %s" % self.GetTriggerSource())
+    s.append("      trigger delay: %s" % self.GetTriggerDelay())
+    s.append("        Continuous?: %s" % self.GetMeasureContinuous())
+    ms = self.GetMultiState()
+    s.append(" Multi-measurement?: %s" % ms)
+    if ms:
+      s.append("      measure-count: %s" % self.GetMeasureCount())
+    return "\n".join(s)
+
+  def GetMeasureCount(self):
+    return int(self.ask("SET:TXP:COUNT:NUMB?"))
+
+  def SetMeasureCount(self, count):
+    if count:
+      self.write("SET:TXP:COUNT:NUMB %s" % count)
+      self.SetMultiState(True)
+    else:
+      self.SetMultiState(False)
+
+  measure_count = property(GetMeasureCount, SetMeasureCount)
+
+  def GetMultiState(self):
+    return bool(int(self.ask("SET:TXP:COUNT:STAT?")))
+
+  def SetMultiState(self, state):
+    self.write("SET:TXP:COUNT:STAT %s" % core.GetSCPIBoolean(state))
+    self.CheckErrors()
+
+  multi_state = property(GetMultiState, SetMultiState)
+
+  def GetMeasureTimeout(self):
+    return core.ValueCheck(self.ask("SET:TXP:TIM:TIME?"))
+
+  def SetMeasureTimeout(self, value):
+    self.write("SET:TXP:TIM:TIME %s" % value)
+
+  measure_timeout = property(GetMeasureTimeout,
+      SetMeasureTimeout)
+
+  def GetMeasureTimeoutState(self):
+    return bool(int(self.ask("SET:TXP:TIM:STAT?")))
+
+  def SetMeasureTimeoutState(self, state):
+    self.write("SET:TXP:TIM:STAT %s" % core.GetSCPIBoolean(state))
+
+  measure_timeout_state = property(GetMeasureTimeoutState,
+      SetMeasureTimeoutState)
+
+  def GetMeasureContinuous(self):
+    return bool(int(self.ask("SET:TXP:CONT?")))
+
+  def SetMeasureContinuous(self, state):
+    self.write("SET:TXP:CONT %s" % core.GetSCPIBoolean(state))
+    self.CheckErrors()
+
+  continuous = property(GetMeasureContinuous, SetMeasureContinuous)
+
+  def GetTriggerSource(self):
+    return self.ask("SET:TXP:TRIG:SOUR?").strip()
+
+  def SetTriggerSource(self, source):
+    """Set to one of the TRIGGER_* values."""
+    self.write("SET:TXP:TRIG:SOUR %s" % source)
+
+  trigger_source = property(GetTriggerSource, SetTriggerSource)
+
+  def GetTriggerDelay(self):
+    return core.GetUnit(self.ask("SET:TXP:TRIG:DEL?"), "s")
+
+  def SetTriggerDelay(self, delay):
+    self.write("SET:TXP:TRIG:DEL %s" % delay)
+
+  trigger_delay = property(GetTriggerDelay, SetTriggerDelay)
+
+  def GetEstimatedPowerState(self):
+    """Queries the TX power estimated carrier power state."""
+    return bool(int(self.ask("SET:TXP:ECP:STAT?")))
+
+  def SetEstimatedPowerState(self, state):
+    """Sets the TX power estimated carrier power state.
+
+    When set to ON and the modulation format is set to 8PSK, the
+    estimated carrier power measurement is calculated.
+
+    When set to OFF and the modulation format is set to 8PSK, the
+    estimated carrier power measurement is not calculated. The power
+    measurement completes in a shorter time when this command is set to
+    OFF.
+
+    If the modulation format is set to GMSK, only the transmit power value
+    is displayed on the test set's front panel, and the transmit power is
+    returned via GPIB when the estimated carrier power result is queried.
+    """
+    self.write("SET:TXP:ECP:STAT %s" % core.GetSCPIBoolean(state))
+    self.CheckErrors()
+
+  estimated_power_state = property(GetEstimatedPowerState,
+      SetEstimatedPowerState)
+
+  def GetBurstCapture(self):
+    return self.ask("SET:TXP:BURST:CAPT?").strip()
+
+  def SetBurstCapture(self, value):
+    """Set to one of BURST_CAPTURE_* values."""
+    self.write("SET:TXP:BURST:CAPT %s" % value.upper())
+    self.CheckErrors()
+
+  burst_capture = property(GetBurstCapture, SetBurstCapture)
+
+  def GetFrameQualifier(self):
+    return bool(int(self.ask("SET:TXP:FRAM:QUAL?")))
+
+  def SetFrameQualifier(self, state):
+    """Set frame qualifier checks on or off.
+
+    This parameter is only applicable when Burst Capture Range is set to
+    All.
+
+    This parameter is used to determine whether the number of the measured
+    bursts and their modulation formats are correct. When Measurement
+    Frame Qualification is set to On , the measurement checks the number
+    of the measured bursts in a TDMA frame and the modulation format of
+    the input signal. If they don't match the expected value, the samples
+    are discarded and the samplers are re-armed. 
+    """
+    self.write("SET:TXP:FRAM:QUAL %s" % core.GetSCPIBoolean(state))
+    self.CheckErrors()
+
+  frame_qualifier = property(GetFrameQualifier, SetFrameQualifier)
+
+  def Prepare(self, context):
+    measctx = context.measure
+    self.ClearErrors()
+    if measctx.timeout >= 0:
+      self.SetMeasureTimeout(measctx.timeout)
+      self.SetMeasureTimeoutState(True)
+    else:
+      self.SetMeasureTimeoutState(False)
+    myctx = measctx.transmitpower
+    self.SetBurstCapture(myctx.burstcapture)
+    self.SetEstimatedPowerState(myctx.estimated_power)
+    self.SetFrameQualifier(myctx.trigger_qualification)
+    self.SetMeasureCount(myctx.measurecount)
+    self.SetMeasureContinuous(measctx.continuous)
+
+  def Perform(self):
+    self.write("INIT:TXP")
+    raw = self.ask("FETCH:TXP?")
+    self.CheckErrors()
+    integrity, power = raw.split(",")
+    integrity = IntegrityIndicator(integrity)
+    if integrity:
+      return TransmitPowerReport(power)
+    else:
+      raise IntegrityError, integrity
+
+
+class TransmitPowerReport(object):
+  def __init__(self, power):
+    self.power = core.ValueCheck(power)
+
+  def __str__(self):
+    return "%s dBm" % (self.power,)
+
+  def __float__(self):
+    return self.power
 

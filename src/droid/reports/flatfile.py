@@ -1,22 +1,8 @@
 #!/usr/bin/python2.4
 # -*- coding: us-ascii -*-
 # vim:ts=2:sw=2:softtabstop=0:tw=74:smarttab:expandtab
-
-# Copyright (C) 2008 The Android Open Source Project
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#      http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-
+# Copyright The Android Open Source Project
 
 """Reports used by the measurement system. 
 
@@ -26,33 +12,32 @@ These write to text files in various formats.
 __author__ = 'dart@google.com (Keith Dart)'
 
 import sys
+import os
 
-from droid.reports import Report
+from droid.reports import core
 
 
-class FileReport(Report):
+class FileReport(core.BaseDatafile):
   EXTENSION = ".txt"
+  filename = None
 
-  def Initialize(self, filename=None, filelike=None, **kwargs):
-    if filename:
-      self._fo = open(filename + self.EXTENSION, "w")
-      self._doclose = True
-    elif filelike:
-      self._fo = filelike
+  def __init__(self, context):
+    self._filename = context.datafilename
+
+  name = property(lambda self: self.filename)
+
+  def Initialize(self):
+    if self._filename == "-":
+      self._fo = sys.stdout
+      self.filename = "<stdout>"
       self._doclose = False
     else:
-      raise ValueError("Must supply filename or filelike parameters.")
+      basename, ext = os.path.splitext(self._filename)
+      self.filename = basename + self.EXTENSION
+      self._fo = open(self.filename, "w")
+      self._doclose = True
 
   def Finalize(self):
-    pass
-
-  name = property(lambda s: s._fo.name)
-
-  def __del__(self):
-    if self._fo is not None:
-      self.close()
-
-  def close(self):
     if self._fo is not None:
       if self._doclose:
         self._fo.close()
@@ -73,10 +58,15 @@ class FileReport(Report):
 class CsvReport(FileReport):
   EXTENSION = ".csv"
 
-  def Initialize(self, **kwargs):
+  def Initialize(self):
     import csv
-    super(CsvReport, self).Initialize(**kwargs)
+    super(CsvReport, self).Initialize()
     self._csv = csv.writer(self._fo)
+
+#  def Finalize(self):
+#    super(CsvReport, self).Finalize()
+#    self._csv.close()
+#    del self._csv
 
   def SetColumns(self, *args):
     self._csv.writerow(args)
@@ -103,28 +93,5 @@ class GnuplotReport(FileReport):
   def WriteTextRecord(self, *args):
     self._fo.write("\t".join(args))
 
-
-
-def GetReport(filename, format):
-  fmt = format[0].upper()
-  if filename:
-    if fmt == "C":
-      report = CsvReport(filename=filename)
-    elif fmt == "T":
-      report = FileReport(filename=filename)
-    elif fmt == "G":
-      report = GnuplotReport(filename=filename)
-    else:
-        raise ValueError("Invalid report format: %r" % format)
-  else:
-    if fmt == "C":
-      report = CsvReport(filelike=sys.stdout)
-    elif fmt == "T":
-      report = FileReport(filelike=sys.stdout)
-    elif fmt == "G":
-      report = GnuplotReport(filelike=sys.stdout)
-    else:
-        raise ValueError("Invalid report format: %r" % format)
-  return report
 
 

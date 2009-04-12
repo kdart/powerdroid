@@ -1,22 +1,8 @@
 #!/usr/bin/python2.4
 # -*- coding: us-ascii -*-
 # vim:ts=2:sw=2:softtabstop=0:tw=74:smarttab:expandtab
-
-# Copyright (C) 2008 The Android Open Source Project
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#      http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-
+# Copyright The Android Open Source Project
 
 """The Power Droid Current Draw Test. 
 
@@ -27,23 +13,14 @@ __version__ = "$Revision: #1 $"
 
 import os
 
-from droid import constants
-from droid.qa import core
-from droid.storage import datafile
-from droid.measure import core as measurecore
-
-# mixin and utility tests
 from testcases.android import common
-from testcases.android import interactive
-from testcases.android import measurements
+from droid import constants
 
 ON = constants.ON
 OFF = constants.OFF
 
 
-class CollectCurrentDraw(interactive.AndroidInteractiveMixin, 
-        measurements.MeasurementsMixin, 
-        core.Test):
+class CollectCurrentDraw(common.DroidBaseTest):
   """
 Purpose
 +++++++
@@ -69,15 +46,23 @@ testcases.android.common.DeviceSetup
 
   """
 
-  def Execute(self, updatestate, syncstate, audiostate, callstate):
+  PREREQUISITES = ["testcases.android.common.DeviceSetup"]
+
+  def Execute(self, updatestate, syncstate, wifistate, audiostate, callstate,
+        airplanestate):
     self.StartIPCounters()
     self.Info(
-        "updatestate: %s, syncstate: %s, audiostate: %s, callstate: %s" % (
-        updatestate, syncstate, audiostate, callstate))
+        "updatestate: %s, syncstate: %s, wifistate: %s, audiostate: %s, callstate: %s" % (
+        updatestate, syncstate, wifistate, audiostate, callstate))
     cf = self.config
     DUT = cf.environment.DUT
 
     self.assertTrue(DUT.IsPoweredOn(), "DUT not in power-on state.")
+
+    if airplanestate == ON and not DUT.IsStateOFF("airplane"):
+      self.SetAirplaneON()
+    if airplanestate == OFF and DUT.IsStateON("airplane"):
+      self.SetAirplaneOFF()
 
     if syncstate == ON and not DUT.IsSyncingOn():
       self.DeviceSyncOn()
@@ -95,63 +80,56 @@ testcases.android.common.DeviceSetup
       self.HangupCall(cf.usercall)
 
     if audiostate == ON and not DUT.IsAudioOn():
-      self.ExternalAudioOn()
+      self.DownlinkAudioOn()
     if audiostate == OFF and DUT.IsAudioOn():
-      self.ExternalAudioOff()
+      self.DownlinkAudioOff()
+
+    if wifistate == ON and DUT.IsStateOFF("wifi"):
+      self.EnableWifi()
+    if wifistate == OFF and DUT.IsStateON("wifi"):
+      self.DisableWifi()
 
     if callstate == ON:
       checkers = [self.CallChecker]
     else:
       checkers = None
 
-    self.DisconnectDevice()
-
     self.Info("IP Traffic during state change:")
     self.EndIPCounters()
     self.StartIPCounters()
-    try:
-      self.TakeCurrentMeasurements(checkers)
-    finally:
-      self.ConnectDevice()
-      DUT.ActivateUSB()
-      self.Info(DUT.GetTimeInfo())
-      self.Info(cf.environment.testset.GetUSFBler())
-      for errcode in cf.environment.testset.Errors():
-        self.Diagnostic(errcode)
-      self.Info("IP Traffic during measurement cycle:")
-      self.EndIPCounters()
+
+    self.TakeCurrentMeasurements(checkers)
+
+    self.Info(DUT.GetTimeInfo())
+    self.Info(cf.environment.testset.GetUSFBler())
+    for errcode in cf.environment.testset.Errors():
+      self.Diagnostic(errcode)
+    self.Info("IP Traffic during measurement cycle:")
+    self.EndIPCounters()
 
     return self.Passed("Collection complete.")
 
 
-class CurrentDrawSuite(core.TestSuite):
-
-  def Initialize(self):
-    cf = self.config
-    cf.environment.testset.ResetCounters()
-    cf.startipcounters = cf.environment.testset.GetIPCounters()
-
-  def Finalize(self):
-    cf = self.config
-    self.Info("Total OTA IP traffic:")
-    self.Info(cf.environment.testset.GetIPCounters() - cf.startipcounters)
-    if cf.environment.DUT.build:
-      fdir = datafile.GetDirectoryName(self.config)
-      fname = datafile.GetFileName(self)
-      os.symlink(
-          cf.resultsdir, os.path.join(fdir, os.path.basename(cf.resultsdir)))
+class CurrentDrawSuite(common.DroidBaseSuite):
+  pass
 
 
-def StateFilter(updatestate, syncstate, audiostate, callstate):
+def StateFilter(updatestate, syncstate, wifistate, audiostate, callstate,
+      airplanestate):
   """Filters out invalid or unwanted combinations from the series generator.
   """
-  if callstate == ON and updatestate == ON:
+  if callstate == ON and updatestate == ON and wifistate == OFF:
+    return False
+  if callstate == ON and syncstate == OFF:
     return False
   # Don't care about audio signal if there is no call.
   if callstate == OFF and audiostate == ON:
     return False
   # updates don't matter if not syncing.
   if syncstate == OFF and updatestate == ON:
+    return False
+  if airplanestate == ON and (callstate == ON or wifistate == ON or
+        syncstate == OFF):
     return False
   return True
 
@@ -161,26 +139,21 @@ def GetSuite(conf):
   # call state second least, etc. Starting state is first column.
   updatestates = [OFF, ON]
   syncstates = [ON, OFF]
+  wifistates = [OFF]
   audiostates = [OFF, ON]
   callstates = [OFF, ON]
+  airplanestates = [OFF]
 
   suite = CurrentDrawSuite(conf)
 
-  if not conf.get("skipsetup", False):
-    suite.AddTest(common.DeviceSetup)
-
-    # TODO(dart) fixme: monkey patch for now, this should be automatic.
-    core.InsertOptions(CollectCurrentDraw)
-    opts = CollectCurrentDraw.OPTIONS
-    opts.prerequisites = [core.PreReq("testcases.android.common.DeviceSetup")]
-
   suite.AddTestSeries(CollectCurrentDraw, 
       # Note: leftmost argument varies fastest.
-      args=(updatestates, syncstates, audiostates, callstates),
+      args=(updatestates, syncstates, wifistates, audiostates, callstates, 
+          airplanestates),
       filter=StateFilter)
-  # one last combination that is the same as the first one. This is to
+  # One last combination that is the same as the first one. This is to
   # test if the device "settles" back into a mode similar to a fresh boot.
-  suite.AddTest(CollectCurrentDraw, OFF, ON, OFF, OFF)
+  suite.AddTest(CollectCurrentDraw, OFF, ON, OFF, OFF, OFF, OFF)
   return suite
 
 def Run(conf):

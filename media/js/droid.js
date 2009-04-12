@@ -1,4 +1,4 @@
-// Copyright Google Inc.
+// Copyright The Android Open Source Project
 // All Rights Reserved.
 
 /**

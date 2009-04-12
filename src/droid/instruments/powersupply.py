@@ -1,22 +1,8 @@
 #!/usr/bin/python2.4
 # -*- coding: us-ascii -*-
 # vim:ts=2:sw=2:softtabstop=0:tw=74:smarttab:expandtab
-
-# Copyright (C) 2008 The Android Open Source Project
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#      http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-
+# Copyright The Android Open Source Project
 
 """Power supply type of instruments.
 """
@@ -29,12 +15,25 @@ from droid.instruments import core
 class PowerSupply(gpib.GpibInstrument):
   """Generic SCPI power supply."""
 
+  WINDOW_HANNING = "HANN"
+  WINDOW_RECTANGLE = "RECT"
+
+  def SetWindow(self, wind):
+    self.write("SENS:WIND %s" % wind.upper())
+    self.CheckErrors()
+
+  def GetWindow(self):
+    return self.ask("SENS:WIND?").strip()
+
+  window = property(GetWindow, SetWindow)
+
   def Reset(self):
     self.clear()
     self.write("*RST; :STATUS:PRESET; *CLS; *SRE 0; *ESE 0")
 
   def SetVoltage(self, voltage):
     self.write("SOUR:VOLT %sV" % float(voltage))
+    self.CheckErrors()
 
   def GetVoltage(self):
     return core.GetUnit(self.ask("SOUR:VOLT?"), "V")
@@ -43,6 +42,7 @@ class PowerSupply(gpib.GpibInstrument):
 
   def SetChargerVoltage(self, voltage):
     self.write("SOUR:VOLT2 %sV" % float(voltage))
+    self.CheckErrors()
 
   def GetChargerVoltage(self):
     return core.GetUnit(self.ask("SOUR:VOLT2?"), "V")
@@ -51,9 +51,11 @@ class PowerSupply(gpib.GpibInstrument):
 
   def On(self):
     self.write("OUTP1:STAT 1")
+    self.CheckErrors()
 
   def Off(self):
     self.write("OUTP1:STAT 0")
+    self.CheckErrors()
 
   def GetOutputState(self):
     return bool(int(self.ask("OUTP1:STAT?")))
@@ -68,9 +70,11 @@ class PowerSupply(gpib.GpibInstrument):
 
   def ChargerOn(self):
     self.write("OUTP2:STAT 1")
+    self.CheckErrors()
 
   def ChargerOff(self):
     self.write("OUTP2:STAT 0")
+    self.CheckErrors()
 
   def GetChargerOutputState(self):
     return bool(int(self.ask("OUTP2:STAT?")))
@@ -98,6 +102,42 @@ class PowerSupply(gpib.GpibInstrument):
 
   dccurrent = property(MeasureDCCurrent)
   acdccurrent = property(MeasureACDCCurrent)
+
+  def GetCurrentRange(self):
+    return core.ValueCheck(self.ask("SENS:CURR:RANG?"))
+
+  def SetCurrentRange(self, maxcurrent):
+    """Set the maximum current (A) that is expected to be measured.
+
+    Args:
+      maxcurrent (float or str) Maximum expected measured current.
+      Shorthand of 'high', 'medium', or 'low' may also be use.
+    """
+    try:
+      maxcurrent = float(maxcurrent)
+    except ValueError:
+      sra = maxcurrent.lower()[0]
+      if sra == "l":
+        maxcurrent = 0.02
+      elif sra == "m":
+        maxcurrent = 1.0
+      elif sra == "h":
+        maxcurrent = 3.0
+      else:
+        raise ValueError("Invalid value for maximum current.")
+    self.write('SENS:CURR:RANG %.2E' % maxcurrent)
+    self.CheckErrors()
+
+  currentrange = property(GetCurrentRange, SetCurrentRange)
+
+  def GetDetector(self):
+    return self.ask('SENS:CURR:DET?').strip()
+
+  def SetDetector(self, detector):
+    self.write('SENS:CURR:DET %s' % detector.upper())
+    self.CheckErrors()
+
+  detector = property(GetDetector, SetDetector)
 
   def FetchDCVoltage(self):
     """Fetch DC voltage, in V."""
@@ -153,9 +193,18 @@ class PowerSupply(gpib.GpibInstrument):
     Also initiates a measurement cycle. This method is fastest.
 
     Returns:
-      (ACDCaverge, LOW, HIGH, MINimum, MAXimum) in mA.
+      (ACDCaverge, LOW, HIGH, MINimum, MAXimum) in A.
     """
     resp = self.ask('MEAS:CURR:ACDC?;:FETC:CURR:LOW?;HIGH?;MIN?;MAX?')
+    return resp.split(";")
+
+  def MeasureAllDCCurrentAsText(self):
+    """Return electric current reading using DC detector.
+
+    Returns:
+      (DCaverge, LOW, HIGH, MINimum, MAXimum) in A.
+    """
+    resp = self.ask('MEAS:CURR:DC?;:FETC:CURR:LOW?;HIGH?;MIN?;MAX?')
     return resp.split(";")
 
   ### Reporting support
@@ -182,10 +231,19 @@ class Ag66319D(PowerSupply):
 
   def Prepare(self, measurecontext):
     myctx = measurecontext.powersupplies
+    if myctx.voltage >= 4.3: # we don't want to "smoke" the DUT.
+      raise ValueError("Voltage must be less than 4.3 V.")
     assert myctx.subsampleinterval >= 15.6e-6
     self.clear()
+    self.timeout = myctx.timeout
     self.SetVoltage(myctx.voltage)
     self.On()
+    self.ChargerOn()
+    self.SetDetector(myctx.detector)
+    self.SetCurrentRange(myctx.maxcurrent)
+    self.SetWindow(myctx.window)
+    self.write("SENS:SWE:POIN %s" % myctx.subsamples)
+    self.write("SENS:SWE:TINT %.2E" % myctx.subsampleinterval)
     samps = myctx.subsamples
     # XXX needs work. non-linear. calibrated to 4096 samples.
     return (samps * myctx.subsampleinterval) + (samps * 1.85e-5)

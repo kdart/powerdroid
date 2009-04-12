@@ -1,22 +1,8 @@
 #!/usr/bin/python2.4
 # -*- coding: us-ascii -*-
 # vim:ts=2:sw=2:softtabstop=0:tw=74:smarttab:expandtab
-
-# Copyright (C) 2008 The Android Open Source Project
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#      http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-
+# Copyright The Android Open Source Project
 
 """Utility test for user-interactive Android tests.
 
@@ -67,7 +53,7 @@ class AndroidInteractiveMixin(object):
     DUT.PowerOn()
     if DUT.IsUSBConnected():
       DUT.ActivateUSB()
-    self.WaitForRuntime()
+      self.WaitForRuntime()
 
   def WaitForRuntime(self):
     cf = self.config
@@ -252,21 +238,36 @@ class AndroidInteractiveMixin(object):
       self.Sleep(3)
       if DUT.IsUSBConnected():
         DUT.Hangup()
+    testset.ClearErrors()
     if testset.IsCallActive():
       raise core.TestIncompleteError, "Call did not hang up."
     DUT.CallInactive()
 
-  def ExternalAudioOn(self):
+  def DownlinkAudioOn(self):
     cf = self.config
-    cf.environment.testset.SetDownlinkAudio("SIN1000") # 1 kHz tone.
+    cf.environment.testset.ClearErrors()
+    cf.environment.testset.SetDownlinkAudio("SIN1000")
     cf.environment.DUT.AudioOn()
-    self.Info("Turned external audio ON.")
+    self.Info("Turned downlink audio ON.")
 
-  def ExternalAudioOff(self):
+  def DownlinkAudioOff(self):
     cf = self.config
+    cf.environment.testset.ClearErrors()
     cf.environment.testset.SetDownlinkAudio("NONE")
     cf.environment.DUT.AudioOff()
-    self.Info("Turned external audio OFF.")
+    self.Info("Turned downlink audio OFF.")
+
+  def UplinkAudioOn(self):
+    cf = self.config
+    #cf.environment.testset.SetUplinkAudio("MULTITONE")
+    cf.environment.DUT.UplinkAudioOn()
+    self.Info("Turned uplink audio ON.")
+
+  def UplinkAudioOff(self):
+    cf = self.config
+    #cf.environment.testset.SetUplinkAudio()
+    cf.environment.DUT.UplinkAudioOff()
+    self.Info("Turned uplink audio OFF.")
 
   def PowerSupplyOn(self):
     self.Info("Turning power supply on.")
@@ -283,9 +284,10 @@ class AndroidInteractiveMixin(object):
   def PowerSupplyVoltage(self):
     return self.config.environment.powersupply.MeasureDCVoltage()
 
-  def PowerCycle(self):
+  def PowerCycle(self, delay=5):
     self.Info("Power cycling DUT.")
     self.config.environment.powersupply.Reset()
+    self.Sleep(delay)
     self.PowerSupplyOn()
     self.ConnectDevice()
     # Take advantage of off state to verify charger voltage here.
@@ -425,17 +427,79 @@ class AndroidInteractiveMixin(object):
   def EnableBluetooth(self):
     cf = self.config
     DUT = cf.environment.DUT
-    retry = 0
-    while retry < 3:
-      cf.UI.printf(
-          "%IVerify Bluetooth is ON and connected to Bluetooth testset.%N "
-          "Answer yes when done.")
-      if cf.UI.yes_no("Bluetooth ON?", default=False):
-        break
-      retry += 1
+    if DUT.IsUSBConnected():
+      DUT.SetBluetoothON()
     else:
-      raise core.TestIncompleteError, "User did not verify bluetooth state."
-    #DUT.ToggleBluetoothState()
-    DUT.StateON("bluetooth")
+      retry = 0
+      while retry < 3:
+        cf.UI.printf(
+            "%IVerify Bluetooth is ON and connected to Bluetooth testset.%N "
+            "Answer yes when done.")
+        if cf.UI.yes_no("Bluetooth ON?", default=False):
+          break
+        retry += 1
+      else:
+        raise core.TestIncompleteError, "User did not verify bluetooth state."
+      DUT.StateON("bluetooth")
     self.Info("Bluetooth is ON.")
+
+  def DisableBluetooth(self):
+    cf = self.config
+    DUT = cf.environment.DUT
+    if DUT.IsUSBConnected():
+      DUT.SetBluetoothOFF()
+    else:
+      retry = 0
+      while retry < 3:
+        cf.UI.printf(
+            "%ITurn OFF and verify Bluetooth is OFF.%N "
+            "Answer yes when done.")
+        if cf.UI.yes_no("Bluetooth OFF?", default=False):
+          break
+        retry += 1
+      else:
+        raise core.TestIncompleteError, "User did not verify bluetooth state."
+      DUT.StateOFF("bluetooth")
+    self.Info("Bluetooth is OFF.")
+
+  def EnableWifi(self):
+    cf = self.config
+    DUT = cf.environment.DUT
+    if DUT.IsUSBConnected():
+      DUT.SetWifiON()
+    else:
+      retry = 0
+      while retry < 3:
+        cf.UI.printf(
+            "%IVerify Wifi is ON and connected to access point.%N "
+            "Answer yes when done.")
+        if cf.UI.yes_no("Wifi ON?", default=False):
+          cf.UI.printf("OK, I %gtrust%N you, %u!")
+          break
+        retry += 1
+      else:
+        raise core.TestIncompleteError, "User did not verify wifi state."
+      DUT.StateON("wifi")
+    self.Info("Wifi is ON.")
+
+  def DisableWifi(self):
+    cf = self.config
+    DUT = cf.environment.DUT
+    if DUT.IsUSBConnected():
+      DUT.SetWifiOFF()
+    else:
+      retry = 0
+      while retry < 3:
+        cf.UI.printf(
+            "%IVerify Wifi is oFF and not connected to access point.%N "
+            "Answer yes when done.")
+        if cf.UI.yes_no("Wifi OFF?", default=False):
+          cf.UI.printf("OK, I %gtrust%N you, %u!")
+          break
+        retry += 1
+      else:
+        raise core.TestIncompleteError, "User did not verify wifi state."
+      DUT.StateOFF("wifi")
+    self.Info("Wifi is OFF.")
+
 

@@ -1,22 +1,8 @@
 #!/usr/bin/python2.4
 # -*- coding: us-ascii -*-
 # vim:ts=2:sw=2:softtabstop=2:smarttab:expandtab
-
-# Copyright (C) 2008 The Android Open Source Project
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#      http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-
+# Copyright The Android Open Source Project
 #
 # Note that docstrings are in RST format:
 # <http://docutils.sourceforge.net/rst.html>.
@@ -41,8 +27,10 @@ from pycopia import timelib
 from droid import adb
 from droid.qa import core
 
+from testcases.android import interactive
 
-class MeasureLevelAdjustment(core.Test):
+
+class MeasureLevelAdjustment(interactive.AndroidInteractiveMixin, core.Test):
   """
 Purpose
 +++++++
@@ -87,6 +75,16 @@ For each increment:
   record the voltage, charge capacity, and LCD backlight brightness setting.
 
 """
+
+  def Initialize(self):
+    cf = self.config
+    env = cf.environment
+    self.Info("Setting maximum battery and rebooting.")
+    env.powersupply.SetVoltage(4.2)
+    env.DUT.Reboot()
+    self.Sleep(60)
+    self.WaitForRuntime()
+
   def Execute(self):
     self.Info("Starting.")
     cf = self.config
@@ -94,25 +92,29 @@ For each increment:
 
     fo = self.GetFile("voltage_batt_lcd", "dat")
     self.Info("Data file path: %r" % (fo.name,))
-    fo.write("Time\tVoltage (V)\tLevel\tLCD Brightness\n")
-
+    fo.write("# Time\tVoltage (V)\tMeasured (V)\tLevel\tLCD Brightness\n")
     try:
-      for v in aid.frange(4.2, 2.8, -0.01):
+      for v in aid.frange(4.19, 2.79, -0.01):
         env.DUT.BackKey()
-        env.powersupply.SetVoltage(v)
-        self.Sleep(5)
         t = timelib.now()
         batt = env.DUT.GetBatteryInfo()
         led = env.DUT.GetLEDInfo()
-        self.Info("Voltage: %s  level: %s  LCD: %s" % (
-            v, batt.capacity, led.lcd_brightness))
-        fo.write("%s\t%s\t%s\t%s\n" % (t, v, batt.capacity, led.lcd_brightness))
+        self.Info("Set voltage: %s, level: %s, measured: %s V, LCD: %s" % (
+            v, batt.capacity, batt.voltage, led.lcd_brightness))
+        fo.write("%s\t%s\t%s\t%s\t%s\n" % (
+            t, v, batt.voltage, batt.capacity, led.lcd_brightness))
+        env.powersupply.SetVoltage(v)
+        self.Sleep(10)
     except adb.AdbError:
       self.Info("Device powered off.")
 
     fo.close()
     return self.Passed("Done.")
 
+  def Finalize(self, outcome):
+    cf = self.config
+    env = cf.environment
+    env.powersupply.SetVoltage(3.8)
 
 
 class BatteryLevelSuite(core.TestSuite):

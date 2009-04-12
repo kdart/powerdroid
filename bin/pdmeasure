@@ -2,23 +2,9 @@
 # -*- coding: us-ascii -*-
 # vim:ts=2:sw=2:softtabstop=0:tw=74:smarttab:expandtab
 # $Id$
-
-# Copyright (C) 2008 The Android Open Source Project
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
+# Copyright The Android Open Source Project
 #
-#      http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-
-
 
 """Take measurements.
 
@@ -30,9 +16,9 @@ import sys
 from pycopia import getopt
 from pycopia import timespec
 
+from droid.measure import core
+from droid.measure import sequencer
 from droid.instruments import core as instrumentcore
-from droid.measure import core as measurecore
-from droid.measure import runner
 
 
 
@@ -49,25 +35,21 @@ def main(argv):
           curr:fast,volt:30
           Means measure current fast as possible, voltage every 30 seconds.
 
-    -c Capture mode: Normal, Singleshot, or Raw (default is Normal).
-    -V Voltage to use (default 3.7V) when measuring current.
+    -r  Current range to measure current at (maximum expected value).
+        The special values "high", "medium", and "low" may also be used.
+    -f  Default report file name (default stdout).
+    -t  Total time span to measure, expressed as time values (e.g. "30s").
 
-    -f Report file name (default stdout).
-    -F Report format (Csv, Tsv, Gnuplot, RRD, default Gnuplot).
+    -p  Show progress.
 
-    -t Total time span to measure, expressed as time values (e.g. "30s").
+    -l  enable triggered mode, and set Level to trigger at.
 
-    -N Number of instrument samples (default 2048).
-    -T Time interval between instrument samples (default 15.6 uS).
-    -p Show progress.
-
-    -l enable triggered mode, and set Level to trigger at.
-
-    -I Print instrument identity and exit.
-    -R Reset the instrument before running the tests. This may reset the DUT.
-    -C Clear the GPIB bus, then exit.
-    -d Turn on debugging.
-    -h This help text.
+    -V  Voltage to use (default 3.8V) when measuring current.
+    -I  Print instrument identity and exit.
+    -R  Reset the instrument before running the tests. This may reset the DUT.
+    -C  Clear the GPIB bus, then exit.
+    -d  Turn on debugging.
+    -h  This help text.
 
   Time values are number-unit combinations such as "1m" for one minute, or
   "2h" for two hours.
@@ -78,7 +60,8 @@ def main(argv):
   identify = False
   verbose = False
   try:
-    opts, longopts, args = getopt.getopt(argv[1:], "h?vdpRCIc:m:N:t:T:f:F:V:s:l:")
+    opts, longopts, args = getopt.getopt(argv[1:], 
+        "h?vdpRCIm:t:f:V:s:l:r:")
   except getopt.GetoptError, err:
     print >>sys.stderr, err
     return
@@ -88,7 +71,7 @@ def main(argv):
     print main.__doc__
     return
 
-  ctx = measurecore.MeasurementContext()
+  ctx = core.MeasurementContext()
   ctx.evalupdate(longopts)
 
   for opt, optarg in opts:
@@ -97,9 +80,7 @@ def main(argv):
       print main.__doc__
       return
     elif opt == "-f":
-      ctx.datafiles.name = optarg
-    elif opt == "-F":
-      ctx.datafiles.format = optarg
+      ctx.datafilename = optarg
     elif opt == "-C":
       clear = True
     elif opt == "-I":
@@ -108,13 +89,11 @@ def main(argv):
       verbose = True
     elif opt == "-d":
       from pycopia import autodebug
-    # measurement context setting
-    elif opt == "-N":
-      ctx.samples = int(optarg)
-    elif opt == "-T":
-      ctx.interval = float(optarg) / 1000000.0 # given in uS
+    # measurement context shortcuts
     elif opt == "-V":
-      ctx.voltage = float(optarg)
+      ctx.powersupplies.voltage = float(optarg)
+    elif opt == "-r":
+      ctx.powersupplies.maxcurrent = optarg
     elif opt == "-R":
       ctx.reset = True
     elif opt == "-p":
@@ -124,7 +103,7 @@ def main(argv):
       ctx.triggered = True
     elif opt in ("-t",  "-s"):
       ctx.timespan = timespec.parse_timespan(optarg)
-    elif opt == "-c":
+    elif opt == "-m":
       ctx.capturemode = optarg[0].upper()
 
   if verbose:
@@ -132,72 +111,23 @@ def main(argv):
   else:
     logfile = None
 
-
   if clear:
     device = instrumentcore.GetInstrument(args[0], logfile=logfile)
     device.clear()
     device.close()
     return
+
   if identify:
     device = instrumentcore.GetInstrument(args[0], logfile=logfile)
     print device.identify()
     device.close()
     return
 
-#  measuremode = measuremodes[0][0] # XXX
-
-#  if measuremode == "B":
-#    from droid.measure import battery
-#    measurer = battery.BatteryRundownMeasurer(ctx)
-#
-#  elif measuremode == "R":
-#    from droid.measure import battery
-#    measurer = battery.BatteryChargeMeasurer(ctx)
-
-#  elif measuremode == "V":
-#    from droid.measure import voltage
-#    if ctx.capturemode in ("F", "N"):
-#      measurer = sequencer.Sequencer(ctx)
-#      vm = voltage.VoltageMeasurer(ctx)
-#      if ctx.capturemode == "F":
-#        measurer.AddFunction(vm, vm.measuretime)
-#      else:
-#        measurer.AddFunction(vm, ctx.delay)
-#    else:
-#      ctx.device = instrumentcore.GetInstrument(args[0], logfile=logfile)
-#      measurer = voltage.OldVoltageMeasurer(ctx)
-#
-#  elif measuremode == "C":
-#    from droid.measure import current
-#    if ctx.capturemode in ("F", "N"):
-#      measurer = sequencer.Sequencer(ctx)
-#      cm = current.PowerCurrentMeasurer(ctx)
-#      if ctx.capturemode == "F":
-#        measurer.AddFunction(cm, cm.measuretime) # fast as it can go.
-#      else:
-#        measurer.AddFunction(cm, ctx.delay)
-#    else:
-#      ctx.device = instrumentcore.GetInstrument(args[0], logfile=logfile)
-#      measurer = current.SpecialCurrentMeasurer(ctx)
-#
-#  else:
-#    print >>sys.stderr, "Invalid measure mode:", measuremode
-#    return
-
-  if ctx.capturemode in "RS": # raw or single
-    from droid.measure import current
-    ctx.device = instrumentcore.GetInstrument(args[0], logfile=logfile)
-    measurer = current.SpecialCurrentMeasurer(ctx)
-    measurer.Run()
-    ctx.device.close()
-    del ctx.device
-  else:
-    measureset = runner.ParseMeasureMode(",".join(args))
-    try:
-      runner.RunSequencer(ctx, measureset)
-    except KeyboardInterrupt:
-      pass
-    print
+  try:
+    sequencer.RunMeasureSpec(ctx, ",".join(args))
+  except KeyboardInterrupt:
+    pass
+  print
 
 main(sys.argv)
 

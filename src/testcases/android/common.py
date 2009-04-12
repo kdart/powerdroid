@@ -1,22 +1,8 @@
 #!/usr/bin/python2.4
 # -*- coding: us-ascii -*-
 # vim:ts=2:sw=2:softtabstop=2:smarttab:expandtab
-
-# Copyright (C) 2008 The Android Open Source Project
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#      http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-
+# Copyright The Android Open Source Project
 #
 # Note that docstrings are in RST format:
 # <http://docutils.sourceforge.net/rst.html>.
@@ -31,14 +17,53 @@ Common tests of a utility nature.
 
 __version__ = "$Revision$"
 
+import os
 
 from droid.qa import core
 from droid.storage import datafile
 
 from testcases.android import interactive
+from testcases.android import measurements
 
 
-class DeviceSetup(core.Test, interactive.AndroidInteractiveMixin):
+class DroidBaseTest(interactive.AndroidInteractiveMixin, 
+        measurements.MeasurementsMixin, 
+        core.Test):
+
+  def Initialize(self):
+    self.config.datafilename = "/var/tmp/droid_measure.dat"
+
+  # Always get a bug report when not in debug mode.
+  def Finalize(self, result):
+    cf = self.config
+    if not cf.flags.DEBUG:
+      cf.logfile.note(self.test_name)
+      cf.logfile.note(str(cf.environment.DUT))
+      self.Info("Collecting bug report.")
+      cf.environment.DUT.BugReport(cf.logfile)
+
+
+class DroidBaseSuite(core.TestSuite):
+
+  def Initialize(self):
+    cf = self.config
+    cf.environment.testset.ResetCounters()
+    cf.startipcounters = cf.environment.testset.GetIPCounters()
+    if not cf.flags.DEBUG:
+      fpdir = datafile.GetDirectoryName(cf)
+      datafile.MakeDataDir(fpdir)
+
+  def Finalize(self):
+    cf = self.config
+    if cf.environment.DUT.build:
+      datadir = datafile.GetDirectoryName(self.config)
+      os.symlink(
+          cf.resultsdir, os.path.join(datadir, os.path.basename(cf.resultsdir)))
+
+
+### utility test cases. ###
+
+class DeviceSetup(DroidBaseTest):
   """
 Purpose
 +++++++
@@ -59,8 +84,8 @@ None.
 End Condition
 +++++++++++++
 
-Device is powered on. It also has sync featured turned off, phone is
-inactive (hung up), no audio signal is being applies.
+Device is powered on. It also has sync featured turned on, phone is
+inactive (hung up), no audio signal is being applies. 
 
 Reference
 +++++++++
@@ -75,96 +100,67 @@ None
 Procedure
 +++++++++
 
+- Power cycle the DUT.
 - Connect DUT to USB controller.
-- Reset and set up test equipment.
+- Reset and prepare test equipment.
 - Power on the device, or optionally reboot it.
 - Check that USB host can see device, and get build information.
-- Optionally fetch bluetooth address.
+- Optionally enabled bluetooth and prepare test equipment.
+- Update the local DUT object settngs and condition state from data
+  available on the DUT.
 
 """
 
   def Execute(self):
     cf = self.config
+    DUT = cf.environment.DUT
+    if DUT is None:
+      raise core.TestSuiteAbort("Could not get DUT")
+    if cf.get("skipsetup", False):
+      DUT.UpdateAllStates()
+      return self.Passed("Environment set up skipped.")
+
+    cf.environment.powersupply.Prepare(cf)
+    self.Sleep(2)
     cf.environment.testset.Prepare(cf)
     self.Info("Radio profile: %s" % (cf.testsets.profile,))
+    self.Info("Network: %s (simulated)" % (cf.SIM,))
+
+    # Disables checkin, or not. Default to what user experiences.
+    if cf.get("blockcheckin", False):
+      self.Info("Not allowing checkin.")
+      DUT.OverrideGserviceSetting("url:block_checkin", 
+          "https://android.clients.google.com/checkin block")
+      self.Sleep(5) # give DUT time to store above
+
     if cf.get("doreboot", False):
       self.RebootDevice()
     else:
       self.PowerCycle()
       self.PowerOnDevice()
-    DUT = cf.environment.DUT
-    self.Info("\nProduct: %s\nType: %s\nBuild id: %s\n" % (
+
+    self.Info("\nProduct: %s\nType: %s\nBranch: %s\nBuild id: %s\n" % (
         DUT.build.product, 
         DUT.build.type, 
+        DUT.build.branch, 
         DUT.build.id))
+
     if cf.bttestsets.use:
       cf.bttestsets.btaddress = DUT.btaddress
       self.Info("Using bluetooth with address %s." % (DUT.btaddress,))
       cf.environment.bttestset.Prepare(cf)
       self.EnableBluetooth()
-    self.ExternalAudioOff()
+    else:
+      self.UplinkAudioOff()
+    self.DownlinkAudioOff()
+    DUT.UpdateAllStates()
     DUT.CallInactive()
-    DUT.XMPPOn()
-    DUT.SyncingOn()
+    if cf.get("needpdp", True):
+      self.WaitForPDP()
     return self.Passed("Environment set up.")
 
 
-class DeviceReport(core.Test, interactive.AndroidInteractiveMixin):
-  """
-Purpose
-+++++++
-
-Utility test to fetch a debug report from DUT.
-
-Pass criteria
-+++++++++++++
-
-None
-
-Start Condition
-+++++++++++++++
-
-None.
-
-End Condition
-+++++++++++++
-
-No change.
-
-Reference
-+++++++++
-
-None
-
-Prerequisites
-+++++++++++++
-
-DeviceSetup
-
-Procedure
-+++++++++
-
-- Fetch debug report from DUT and write it to the log file.
-
-"""
-
-  def Execute(self):
-    cf = self.config
-    self.Info("Collecting bug report.")
-    self.ConnectDevice()
-    cf.environment.DUT.ActivateUSB()
-    cf.environment.DUT.BugReport(cf.logfile)
-    return self.Passed("Bug report written to log file.")
-
-
-# TODO(dart) remove this once auto-insertion of prereqs is added
-core.InsertOptions(DeviceReport)
-DeviceReport.OPTIONS.prerequisites = [
-    core.PreReq("testcases.android.common.DeviceSetup"),
-  ]
-
-
-class DeviceUpdate(core.Test, interactive.AndroidInteractiveMixin):
+class DeviceUpdate(DroidBaseTest):
   """
 Purpose
 +++++++
@@ -240,14 +236,16 @@ Procedure
     if status:
       del env.DUT.build # remove old build information from DUT.
       self.Info(output)
-      self.Info("Waiting for bootup...")
-      self.Sleep(120)
-      self.ConnectDevice()
+      self.Sleep(20)
       env.DUT.ActivateUSB()
+      self.Sleep(10)
+      self.WaitForRuntime()
       self.assertEqual(env.DUT.build.id.rsplit("-", 1)[0], # may have "-INSECURE"
           zipbuildname, "Not updated.")
       self.Info("Adding testset APN info: %r." % (env.APNINFO.name,))
       env.DUT.UpdateAPN(env.APNINFO)
+      self.Info("Setting bluetooth name to: %r." % (env.DUT.BLUETOOTHNAME,))
+      env.DUT.SetProp("net.bt.name", env.DUT.BLUETOOTHNAME)
       fpdir = datafile.GetDirectoryName(self.config)
       self.Info("Making data directory: %r" % fpdir)
       datafile.MakeDataDir(fpdir)
@@ -258,8 +256,7 @@ Procedure
       return self.Failed("fastboot error: %s" % (status,))
 
 
-
-class SetupSuite(core.TestSuite):
+class SetupSuite(DroidBaseSuite):
   pass
 
 
@@ -267,7 +264,6 @@ class SetupSuite(core.TestSuite):
 def GetSuite(conf):
   suite = SetupSuite(conf)
   suite.AddTest(DeviceSetup)
-  suite.AddTest(DeviceReport)
   return suite
 
 def Run(conf):

@@ -1,22 +1,8 @@
 #!/usr/bin/python2.4
 # -*- coding: us-ascii -*-
 # vim:ts=2:sw=2:softtabstop=0:tw=74:smarttab:expandtab
-
-# Copyright (C) 2008 The Android Open Source Project
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#      http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-
+# Copyright The Android Open Source Project
 
 """Common components of instrument package.
 
@@ -35,90 +21,11 @@ PQ = physical_quantities.PhysicalQuantity
 ON = aid.Enum(1, "ON")
 OFF = aid.Enum(0, "OFF")
 
+_config = None
+_instrumentcache = {}
 
-# TODO(dart) get from config or storage
-from pycopia.dictlib import AttrDict
-INSTRUMENTS = {
-  "controller": AttrDict(
-        object="droid.instruments.gpib.GpibController",
-        gpibname="gpib0"),
-  "fluke45": AttrDict(
-        object="droid.instruments.multimeter.Fluke45",
-        port="/dev/ttyS0",
-        serial="9600 8N1",
-        clicommands="droid.instruments.serialCLI.SerialInstrumentCLI",
-        prompt="=>\r\n"),
-  "ps1": AttrDict(
-        object="droid.instruments.powersupply.Ag66319D",
-        clicommands="droid.instruments.powersupplyCLI.Ag66319D_CLI",
-        gpibboard=0, gpibpad=7,
-        gpibname="ps1"),
-  "ps1dvm": AttrDict(
-        object="droid.instruments.powersupply.Ag66319dDVM",
-        gpibboard=0, gpibpad=7,
-        gpibname="ps1"),
-  "n4010a": AttrDict(
-        object="droid.instruments.testset.N4010a",
-        clicommands="droid.instruments.testsetCLI.N4010aCLI",
-        gpibboard=0, gpibpad=15,
-        gpibname="n4010a"),
-  "n4010a_afgen": AttrDict(
-        object="droid.instruments.testset.N4010aAudioGenerator",
-        clicommands="droid.instruments.testsetCLI.N4010aAudioGeneratorCLI",
-        gpibboard=0, gpibpad=15,
-        gpibname="n4010a"),
-  "n4010a_afana": AttrDict(
-        object="droid.instruments.testset.N4010aAudioAnalyzer",
-        clicommands="droid.instruments.testsetCLI.N4010aAudioAnalyzerCLI",
-        gpibboard=0, gpibpad=15,
-        gpibname="n4010a"),
-  "ag8960": AttrDict(
-        object="droid.instruments.testset.Ag8960",
-        clicommands="droid.instruments.testsetCLI.Ag8960CLI",
-        gpibboard=0, gpibpad=14,
-        gpibname="ag8960"),
-  "ag8960_afgen": AttrDict(
-        object="droid.instruments.testset.Ag8960AudioGenerator",
-        clicommands="droid.instruments.testsetCLI.Ag8960_AFG_CLI",
-        gpibboard=0, gpibpad=14),
-  "ag8960_afana": AttrDict(
-        object="droid.instruments.testset.Ag8960AudioAnalyzer",
-        clicommands="droid.instruments.testsetCLI.Ag8960_AFA_CLI",
-        gpibboard=0, gpibpad=14),
-  "ag8960_mtgen": AttrDict(
-        object="droid.instruments.testset.Ag8960MultitoneAudioGenerator",
-        clicommands="droid.instruments.testsetCLI.Ag8960_MTG_CLI",
-        gpibboard=0, gpibpad=14),
-  "ag8960_mtana": AttrDict(
-        object="droid.instruments.testset.Ag8960MultitoneAudioAnalyzer",
-        clicommands="droid.instruments.testsetCLI.Ag8960_MTA_CLI",
-        gpibboard=0, gpibpad=14),
-  "dpo4104": AttrDict( # uses USBTMC
-        object="droid.instruments.oscilloscope.TekDPO4104Oscilloscope",
-        clicommands="droid.instruments.oscilloscope_cli.TekDPOCLI",
-        manufacturer="Tektronix",
-        model="DPO4104"),
-  "mock": AttrDict(object="droid.instruments.mocks.MockDevice"),
-}
-
-
-# TODO(dart) put in config file
-GENERICMAP = {
-  "afgenerator1": "ag8960_afgen",
-  "afgenerator2": "n4010a_afgen",
-  "afanalyzer1": "ag8960_afana",
-  "afanalyzer2": "n4010a_afana",
-  "multitonegen": "ag8960_mtgen",
-  "multitoneana": "ag8960_mtana",
-  "powersupply": "ps1",
-  "dvm": "ps1dvm",
-  "bttestset": "n4010a",
-  "testset": "ag8960",
-  "multimeter": "fluke45",
-  "cell_simulator": "ag8960",
-  "oscilloscope": "dpo4104",
-}
-
+class NoSuchDevice(Exception):
+  pass
 
 
 class DeviceError(object):
@@ -251,21 +158,53 @@ def GetSCPIBoolean(something):
     return OFF
 
 
+def _GetConfig():
+  global _config
+  if _config is None:
+    from pycopia import basicconfig
+    _config = basicconfig.get_config("/etc/droid/powerdroid.conf")
+  return _config
+
+
 def GetInstrument(name, logfile=None):
-  realname = GENERICMAP.get(name, name)
-  devctx = INSTRUMENTS[realname]
+  global _instrumentcache
+  cf = _GetConfig()
+  realname = cf.GENERICMAP.get(name, name)
+  try:
+    inst =  _instrumentcache[realname]
+    if inst.closed:
+      del _instrumentcache[realname]
+    else:
+      return inst
+  except KeyError:
+    pass
+  devctx = cf.INSTRUMENTS[realname]
   try:
     cls = module.GetObject(devctx.object)
   except ImportError:
-    cls = module.GetObject(INSTRUMENTS["mock"].object)
+    raise NoSuchDevice(realname)
   dev = cls(devctx, logfile=logfile)
   dev._configname = realname
+  dev.realname = realname
+  _instrumentcache[realname] = dev
   return dev
 
+
 def GetCommandClass(name):
-  devctx = INSTRUMENTS[GENERICMAP.get(name, name)]
+  cf = _GetConfig()
+  devctx = cf.INSTRUMENTS[cf.GENERICMAP.get(name, name)]
   return module.GetObject(devctx.get("clicommands", 
                 "droid.instruments.gpibCLI.GenericInstrument"))
+
+
+def ClearInstruments():
+  global _instrumentcache
+  for inst in _instrumentcache.values():
+    try:
+      inst.close()
+    except AttributeError:
+      pass
+  _instrumentcache = {}
 
 
 # Instrument classes defined by VISA. Used for type checking and is-a

@@ -1,19 +1,3 @@
-/*
- * Copyright (C) 2008 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *      http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 /***********************************************************
  * Python wrapper module for gpib library functions.
  * vim:ts=4:sw=4:softtabstop=0:smarttab
@@ -28,6 +12,7 @@
 #include <gpib/ib.h>
 #endif
 
+#include <errno.h>
 #include <lockdev.h>
 #include <unistd.h>
 #include <stdio.h>
@@ -37,7 +22,9 @@
 #define LOCKNAME_SIZE 32
 
 
-/*
+static PyObject *GpibError;
+
+
 struct _iberr_string {
     int code;
     char *meaning;
@@ -51,7 +38,7 @@ static struct _iberr_string GPIB_errors[] = {
     {EARG, "One or more arguments to the function call were invalid."},
     {ESAC, "The interface board needs to be system controller, but is not."},
     {EABO, "A read or write of data bytes has been aborted, possibly due to a timeout or reception of a device clear command."},
-    {ENEB, "The GPIB interface board does not exist, its driver is not loaded, or it is not configured properly."},
+    {ENEB, "The GPIB interface board does not exist, its driver is not loaded, or it is in use by another process."},
     {EDMA, "Not used (DMA error), included for compatibility purposes."},
     {EOIP, "Function call can not proceed due to an asynchronous IO operation (ibrda(), ibwrta(), or ibcmda()) in progress."},
     {ECAP, "Incapable of executing function call, due the GPIB board lacking the capability, or the capability being disabled in software."},
@@ -62,9 +49,40 @@ static struct _iberr_string GPIB_errors[] = {
     {ETAB, "This error can be returned by ibevent(), FindLstn(), or FindRQS(). See their descriptions for more information."},
     {0, NULL},
 };
-*/
 
-static PyObject *GpibError;
+void _SetGpibError(const char *funcname)
+{
+	char *errstr;
+	struct _iberr_string entry;
+	int sverrno;
+
+	sverrno = errno;
+	errstr = (char *) PyMem_Malloc(4096);
+
+    if (iberr == EDVR || iberr == EFSO) {
+		snprintf(errstr, 4096, "%s() error: (%d) %s", 
+				funcname, sverrno, strerror(sverrno));
+    } 
+	else {
+		int i = 0;
+		while (1) {
+			entry = GPIB_errors[i];
+			if (entry.code == iberr || entry.meaning == NULL)
+				break;
+			i++;
+		}
+		if (entry.meaning != NULL)
+			snprintf(errstr, 4096, "%s() failed: %s", 
+					funcname, entry.meaning);
+		else
+			snprintf(errstr, 4096, 
+					"%s() failed: unknown reason (iberr: %d).", funcname, iberr);
+    }
+	PyErr_SetString(GpibError, errstr);
+	PyMem_Free(errstr);
+}
+
+
 
 /* ----------------------------------------------------- */
 
@@ -91,8 +109,8 @@ static PyObject* gpib_find(PyObject *self, PyObject *args)
 		return NULL;
 
 	if((ud = ibfind(name)) & ERR){
-	  PyErr_SetString(GpibError,"Find Error: can't find device!");
-	  return NULL;
+		_SetGpibError("find");
+	    return NULL;
 	}
 
 	get_lockname(lockname, LOCKNAME_SIZE, ud);
@@ -124,17 +142,13 @@ static PyObject* gpib_ibdev(PyObject *self, PyObject *args)
     int eot = 1;
     int flags = 0x1000;
     char eoc = 0xa;
-    char *errstr;
 
 	if (!PyArg_ParseTuple(args, "ii|iiic", &board, &pad, &sad, &tmo, &eot, &eoc))
 		return NULL;
     ud = ibdev(board, pad, sad, tmo, eot, flags | eoc);
 // int ibdev(int boardID, int pad, int sad, int tmo, int eot, int eos);
     if (ud < 0) {
-		errstr = PyMem_Malloc(64);
-		snprintf(errstr, 64, "ibdev failed: iberr: %d", iberr);
-		PyErr_SetString(GpibError, errstr);
-		PyMem_Free(errstr);
+		_SetGpibError("ibdev");
         return NULL;
     }
 	return Py_BuildValue("i", ud);
@@ -154,7 +168,7 @@ static PyObject* gpib_ibask(PyObject *self, PyObject *args)
 		return NULL;
 
     if (ibask(device, option, &result) & ERR) {
-	  PyErr_SetString(GpibError, "Error: ibask");
+		_SetGpibError("ibask");
       return NULL;
     }
 
@@ -175,7 +189,7 @@ static PyObject* gpib_ibconfig(PyObject *self, PyObject *args)
 		return NULL;
 
     if (ibconfig(device, option, setting) & ERR) {
-	  PyErr_SetString(GpibError, "Config Error: ibconfig");
+		_SetGpibError("ibconfig");
 	  return NULL;
     }
 
@@ -191,7 +205,6 @@ static char gpib_read__doc__[] =
 static PyObject* gpib_read(PyObject *self, PyObject *args)
 {
 	char *result;
-	char *errstr;
 	int device;
 	int len;
 	PyObject *retval;
@@ -202,16 +215,13 @@ static PyObject* gpib_read(PyObject *self, PyObject *args)
 	result = PyMem_Malloc(len + 1);
 	if(result == NULL)
 	{
-		PyErr_SetString(GpibError,"Read Error: can't get Memory ");
+		PyErr_SetString(GpibError, "Read Error: can't get Memory.");
 		return NULL;
 	}
 
 	if( ibrd(device,result,len) & ERR )
 	{
-		errstr = PyMem_Malloc(4096);
-		snprintf(errstr, 4096, "Read Error: ibrd() failed: iberr: %d", iberr);
-		PyErr_SetString(GpibError, errstr);
-		PyMem_Free(errstr);
+		_SetGpibError("read");
 		PyMem_Free(result);
 		return NULL;
 	}
@@ -230,7 +240,6 @@ static char gpib_readbin__doc__[] =
 static PyObject* gpib_readbin(PyObject *self, PyObject *args)
 {
 	char *result;
-	char *errstr;
 	PyObject *retval;
 	int device;
 	int len;
@@ -241,21 +250,77 @@ static PyObject* gpib_readbin(PyObject *self, PyObject *args)
 	result = PyMem_Malloc(len + 1);
 	if(result == NULL)
 	{
-		PyErr_SetString(GpibError,"Read Error: can't get Memory ");
+		PyErr_SetString(GpibError, "Read Error: can't get Memory.");
 		return NULL;
 	}
-
-	if( ibrd(device,result,len) & ERR )
+	if( ibrd(device, result, len) & ERR )
 	{
-		errstr = PyMem_Malloc(4096);
-		snprintf(errstr, 4096, "Read Error: ibrd() failed: iberr: %d", iberr);
-		PyErr_SetString(GpibError, errstr);
-		PyMem_Free(errstr);
-		PyMem_Free(result);
+		if (iberr == EDVR && errno == EINTR) { /* try once more. */
+			if( ibrd(device, result, len) & ERR )
+			{
+				_SetGpibError("readbin2");
+				PyMem_Free(result);
+				return NULL;
+			}
+		} else {
+			_SetGpibError("readbin");
+			PyMem_Free(result);
+			return NULL;
+		}
+	}
+
+	retval = PyString_FromStringAndSize(result, ibcnt);
+	PyMem_Free(result);
+	return retval;
+}
+
+
+static char gpib_ask__doc__[] =
+""
+;
+
+static PyObject* gpib_ask(PyObject *self, PyObject *args)
+{
+	char *command;
+	int command_len;
+	char *result;
+	PyObject *retval;
+	int device;
+	int len;
+
+	if (!PyArg_ParseTuple(args, "iis#", &device, &len, &command, &command_len))
+		return NULL;
+
+	result = PyMem_Malloc(len + 1);
+	if(result == NULL)
+	{
+		PyErr_SetString(GpibError, "Read Error: can't get Memory.");
 		return NULL;
 	}
 
-	retval = Py_BuildValue("s#", result, ibcnt);
+	if( ibwrt(device, command, command_len) & ERR ){
+		_SetGpibError("ask_wrt");
+		PyMem_Free(result);
+	    return NULL;
+	}
+
+	if( ibrd(device, result, len) & ERR )
+	{
+    	if (iberr == EDVR && errno == EINTR) { /* try once more. */
+			if( ibrd(device, result, len) & ERR )
+			{
+				_SetGpibError("ask_rd2");
+				PyMem_Free(result);
+				return NULL;
+			}
+		} else {
+			_SetGpibError("ask_rd");
+			PyMem_Free(result);
+			return NULL;
+		}
+	}
+
+	retval = PyString_FromStringAndSize(result, ibcnt);
 	PyMem_Free(result);
 	return retval;
 }
@@ -269,13 +334,14 @@ static char gpib_write__doc__[] =
 static PyObject* gpib_write(PyObject *self, PyObject *args)
 {
         char *command;
+		int command_len;
         int  device;
 
-	if (!PyArg_ParseTuple(args, "is",&device,&command))
+	if (!PyArg_ParseTuple(args, "is#",&device, &command, &command_len))
 		return NULL;
-	if( ibwrt(device,command,strlen(command)) & ERR ){
-	  PyErr_SetString(GpibError,"Write Error: ibwrt");
-	  return NULL;
+	if( ibwrt(device, command, command_len) & ERR ){
+		_SetGpibError("write");
+	    return NULL;
 	}
 
 	Py_INCREF(Py_None);
@@ -296,7 +362,7 @@ static PyObject* gpib_writebin(PyObject *self, PyObject *args)
         if (!PyArg_ParseTuple(args, "is#i",&device,&command,&cmdlength,&length))
                 return NULL;
         if( ibwrt(device,command,length) & ERR ){
-           PyErr_SetString(GpibError,"Write Error: ibwrt");
+		   _SetGpibError("writebin");
            return NULL;
         }
 
@@ -312,12 +378,13 @@ static char gpib_writea__doc__[] =
 static PyObject* gpib_writea(PyObject *self, PyObject *args)
 {
         char *command;
+        int  command_len;
         int  device;
 
-	if (!PyArg_ParseTuple(args, "is",&device, &command))
+	if (!PyArg_ParseTuple(args, "is#", &device, &command, &command_len))
 		return NULL;
-	if( ibwrta(device, command, strlen(command)) & ERR ){
-	  PyErr_SetString(GpibError,"Async Write Error: ibwrta");
+	if( ibwrta(device, command, command_len) & ERR ){
+	  _SetGpibError("writea");
 	  return NULL;
 	}
 
@@ -332,12 +399,13 @@ static char gpib_cmd__doc__[] =
 static PyObject* gpib_cmd(PyObject *self, PyObject *args)
 {
         char *command;
+        int  command_len;
         int  device;
 
-	if (!PyArg_ParseTuple(args, "is",&device,&command))
+	if (!PyArg_ParseTuple(args, "is#",&device, &command, &command_len))
 		return NULL;
-	if( ibcmd(device, command, strlen(command)) & ERR ){
-	  PyErr_SetString(GpibError,"Command Error: cmd");
+	if( ibcmd(device, command, command_len) & ERR ){
+	  _SetGpibError("cmd");
 	  return NULL;
 	}
 
@@ -357,7 +425,7 @@ static PyObject* gpib_ren(PyObject *self, PyObject *args)
 		return NULL;
 
 	if( ibsre(device,val) & ERR){
-	  PyErr_SetString(GpibError,"Ren Error: ibsre() failed");
+	  _SetGpibError("ren");
 	  return NULL;
 	}
 
@@ -377,7 +445,7 @@ static PyObject* gpib_clear(PyObject *self, PyObject *args)
 		return NULL;
 
 	if( ibclr(device) & ERR){
-	  PyErr_SetString(GpibError,"Clear Error: ibclr() failed");
+	  _SetGpibError("clear");
 	  return NULL;
 	}
 
@@ -421,7 +489,7 @@ static PyObject* gpib_close(PyObject *self, PyObject *args)
     dev_unlock(lockname, getpid());
 
 	if( ibonl(device, 0) & ERR ){
-	  PyErr_SetString(GpibError,"Close Error: ibonl() failed");
+	  _SetGpibError("close");
 	  return NULL;
 	}
 
@@ -443,7 +511,7 @@ static PyObject* gpib_wait(PyObject *self, PyObject *args)
 		return NULL;
 
 	if(ibwait(device, mask) & ERR) {
-	  PyErr_SetString(GpibError,"Wait Error: ibwait() failed");
+	  _SetGpibError("wait");
 	  return NULL;
 	}
 
@@ -463,7 +531,7 @@ static PyObject* gpib_tmo(PyObject *self, PyObject *args)
 	if (!PyArg_ParseTuple(args, "ii",&device,&value))
 		return NULL;
 	if( ibtmo(device, value) & ERR){
-	  PyErr_SetString(GpibError,"Timeout Error: ibtmo() failed");
+	  _SetGpibError("tmo");
 	  return NULL;
 	}
 	Py_INCREF(Py_None);
@@ -483,7 +551,7 @@ static PyObject* gpib_rsp(PyObject *self, PyObject *args)
 		return NULL;
 
 	if( ibrsp(device, &spr) & ERR){
-	  PyErr_SetString(GpibError, "Rsp Error: ibrsp() failed");
+	  _SetGpibError("rsp");
 	  return NULL;
 	}
 	
@@ -502,7 +570,7 @@ static PyObject* gpib_trg(PyObject *self, PyObject *args)
 		return NULL;
 
 	if( ibtrg(device) & ERR){
-	  PyErr_SetString(GpibError, "Trg Error: ibtrg() failed");
+	  _SetGpibError("trg");
 	  return NULL;
 	}
 
@@ -545,6 +613,7 @@ static struct PyMethodDef gpib_methods[] = {
  {"ibconfig",	gpib_ibconfig,	1,	gpib_ibconfig__doc__},
  {"read",	gpib_read,	1,	gpib_read__doc__},
  {"readbin",	gpib_readbin,	1,	gpib_readbin__doc__},
+ {"ask",	gpib_ask,	1,	gpib_ask__doc__},
  {"write",	gpib_write,	1,	gpib_write__doc__},
  {"writea",	gpib_writea,	1,	gpib_writea__doc__},
  {"writebin",	gpib_writebin,	1,	gpib_writebin__doc__},

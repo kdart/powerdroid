@@ -1,22 +1,8 @@
 #!/usr/bin/python2.4
 # -*- coding: utf-8 -*-
 # vim:ts=2:sw=2:softtabstop=0:tw=74:smarttab:expandtab
-
-# Copyright (C) 2008 The Android Open Source Project
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#      http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-
+# Copyright The Android Open Source Project
 
 """Device models and controllers.
 """
@@ -83,6 +69,11 @@ class APNInfo(object):
   """
   def __init__(self, **kwargs):
     self.__dict__.update(kwargs)
+
+  def __repr__(self):
+    return ("APNInfo(" + 
+      ", ".join(["%s=%r" % t for t in self.__dict__.items()]) + 
+      ")")
 
 
 class TimeInfoReport(object):
@@ -457,6 +448,8 @@ class MobileDevice(Device):
     self.serialno = serialno
     self._build = None
     self._btaddress = None
+    self._system_settings = None
+    self._sync_settngs = None
     self.account = None # Gmail/XMPP account name.
     self.password = None
     self.hostname = None
@@ -471,6 +464,7 @@ class MobileDevice(Device):
       "airplane":  OFF,
       "call":  UNKNOWN,
       "audio":  UNKNOWN,
+      "uplinkaudio":  OFF,
       "sync":  UNKNOWN,
       "xmpp":  UNKNOWN, # Persistent XMPP connection setting.
       "updates":  OFF, # account actively being updated with mail?
@@ -611,6 +605,17 @@ class MobileDevice(Device):
   def IsAudioOn(self):
     return self._states.audio == ON
 
+  def UplinkAudioOn(self):
+    """Tell us uplink audio signal is being sent."""
+    self._states.uplinkaudio = ON
+
+  def UplinkAudioOff(self):
+    """Tell us uplink audio signal is NOT being sent."""
+    self._states.uplinkaudio = OFF
+
+  def IsUplinkAudioOn(self):
+    return self._states.uplinkaudio == ON
+
   def CallActive(self):
     """Tell us phone has call set up."""
     self._states.call = ON
@@ -650,6 +655,7 @@ class MobileDevice(Device):
   def SyncingOn(self):
     """Tell us syncing is turned on."""
     self._states.sync = ON
+    self._states.xmpp = ON
 
   def SyncingOff(self):
     """Tell us syncing is turned off."""
@@ -693,11 +699,13 @@ class TMobileDash(MobileDevice):
 
 class AndroidDevice(MobileDevice):
   APNDBFILE = \
-    "/data/data/com.android.providers.telephony/databases/telephony.db"
+    "/data/data/com.android.providers.telephony/databases/telephony.db" # TC2
   ACCOUNTDBFILE = \
-    "/data/data/com.google.android.googleapps/databases/accounts.db"
+    "/data/data/com.android.googleapps/databases/accounts.db"
   SETTINGSDBFILE = \
     "/data/data/com.android.providers.settings/databases/settings.db"
+  SYNCSETTINGSDB = "/data/system/syncmanager.db"
+  BLUETOOTHNAME = "powerandroid"
 
   def IsUSBActive(self):
     """Determine if device is actually connected to USB and powered on.
@@ -792,6 +800,23 @@ class AndroidDevice(MobileDevice):
     self._controller.ShellCommand(cmd)
     return str(SQL)
 
+  def GetAPNList(self):
+    rv = []
+    sql = ("SELECT "
+        "name, numeric, mcc, mnc, apn, user, server, password, "
+        "proxy, port, mmsproxy, mmsport, mmsc, type, current "
+        "FROM carriers;")
+    result = SQLQuery(self._controller, self.APNDBFILE, sql)
+    for line in result.splitlines():
+      entry = line.split("|")
+      if len(entry) == 15:
+        info = APNInfo(**dict(zip(("name", "numeric", "mcc", "mnc", "apn", 
+            "user", "server", "password", "proxy", "port", "mmsproxy", 
+            "mmsport", "mmsc", "type", "current"), entry)))
+        rv.append(info)
+    rv.sort()
+    return rv
+
   def GetBluetoothAddress(self):
     if self._btaddress is None:
       self._btaddress = 100996019768 # TODO(dart) get dynamically
@@ -821,6 +846,14 @@ class AndroidDevice(MobileDevice):
 
   def IsCPUEaterRunning(self):
     return bool(self._cpueater_pid)
+
+  def Daemonize(self, cmd, outfile="/sdcard/dout.txt", delay=0):
+    cmd = 'daemonize -f %s -d %s %s' % (outfile, delay, cmd)
+    return self._controller.ShellCommandOutput(cmd)
+
+  def GetDeamonOutput(self, outfile="/sdcard/dout.txt"):
+    cmd = "cat %s" % outfile
+    return self._controller.ShellCommandOutput(cmd)
 
   def BugReport(self, stream):
     self._controller.BugReport(stream)
@@ -894,9 +927,19 @@ class AndroidDevice(MobileDevice):
 
   def StartSettings(self):
     rv = self._controller.ShellCommandOutput(
-        "am start -n com.android.settings/.SettingsTwo")
+        "am start -n com.android.settings/.Settings")
     scheduler.sleep(3.0)
     return rv
+
+  def StartWirelessSettings(self):
+    rv = self._controller.ShellCommandOutput(
+        "am start -n com.android.settings/.WirelessSettings")
+    scheduler.sleep(3.0)
+    return rv
+
+  def SendIntent(self, action):
+    cmd = "am broadcast -a %s" % action
+    return self._controller.ShellCommandOutput(cmd)
 
   def PressKey(self, code, delay=0.0, hold=0.0, 
         shift=False, alt=False, sym=False):
@@ -927,12 +970,165 @@ class AndroidDevice(MobileDevice):
   def GetProp(self, name):
     return self._controller.ShellCommandOutput("getprop %s" % name)
 
+  def GetAllProps(self):
+    rv = {}
+    text = self._controller.ShellCommandOutput("getprop")
+    for line in text.splitlines():
+      match = _PROP_RE.search(line)
+      if match:
+        rv[match.group(1)] = match.group(2)
+    return rv
+
   def SetProp(self, name, value):
     self._controller.ShellCommand("setprop %s %s" % (name, value))
 
   def IsBootComplete(self):
     return bool(self.GetProp("dev.bootcomplete").strip())
 
+  def UpdateAllStates(self):
+    self.UpdateSystemSettings()
+    self.UpdateSyncSettings()
+    try:
+      self._UpdateWifiState()
+      self._UpdateBluetoothState()
+      self._UpdateAirplaneState()
+    except KeyError: # likely a user build
+      pass 
+
+  def _UpdateWifiState(self):
+    if self._system_settings["wifi_on"]:
+      self.StateON("wifi")
+    else:
+      self.StateOFF("wifi")
+
+  def _UpdateBluetoothState(self):
+    if self._system_settings["bluetooth_on"]:
+      self.StateON("bluetooth")
+    else:
+      self.StateOFF("bluetooth")
+
+  def _UpdateAirplaneState(self):
+    if self._system_settings["airplane_mode_on"]:
+      self.StateON("airplane")
+    else:
+      self.StateOFF("airplane")
+
+  def SetGservicesSetting(self, name, value):
+    sql = "insert into gservices(name,value) values ('%s','%s');" % (name, value)
+    return SQLQuery(self._controller, self.SETTINGSDBFILE, sql)
+
+  def GetGservicesSetting(self, name):
+    sql = "select 'VALUE['||value||']' from gservices where name='%s';" % name
+    result = SQLQuery(self._controller, self.SETTINGSDBFILE, sql)
+    match = _SQL_VALUE_RE.search(result)
+    return match and match.group(1) or ""
+
+  def DeleteGservicesSetting(self, name):
+    return SQLQuery(self._controller, self.SETTINGSDBFILE, 
+        "DELETE FROM gservices WHERE name = '%s'" % name)
+
+  def GetAllGservicesSettings(self):
+    rv = dictlib.AttrDict()
+    sql = 'select * from gservices;'
+    result = SQLQuery(self._controller, self.SETTINGSDBFILE, sql)
+    for line in result.splitlines():
+      pkey, name, value = line.split("|", 2)
+      rv[name] = value
+    return rv
+
+  def ResetGserviceSetting(self, name):
+    overrides = self.GetGservicesSetting("override").split()
+    if name in overrides:
+      overrides.remove(name)
+      self.SetGservicesSetting("override", " ".join(overrides))
+    self.DeleteGservicesSetting(name)
+    self.DeleteGservicesSetting("digest")
+    self.SendIntent("android.server.checkin.CHECKIN")
+
+  def OverrideGserviceSetting(self, name, value):
+    overrides = self.GetGservicesSetting("override").split()
+    if name not in overrides:
+      overrides.append(name)
+      self.SetGservicesSetting("override", " ".join(overrides))
+    self.SetGservicesSetting(name, value)
+    self.DeleteGservicesSetting("digest")
+
+  def GetSystemSetting(self, name):
+    sql = "select 'VALUE['||value||']' from system where name='%s';" % name
+    result = SQLQuery(self._controller, self.SETTINGSDBFILE, sql)
+    match = _SQL_VALUE_RE.search(result)
+    if match:
+      value = match.group(1)
+      try:
+        value = int(value)
+      except ValueError:
+        pass
+      return value
+    else:
+      return None
+
+  def SetSystemSetting(self, name, value):
+    sql = "insert into system(name,value) values ('%s','%s');" % (name, value)
+    return SQLQuery(self._controller, self.SETTINGSDBFILE, sql)
+
+  def GetSyncSetting(self, name):
+    sql = "select 'VALUE['||value||']' from settings where name='%s';" % name
+    result = SQLQuery(self._controller, self.SYNCSETTINGSDB, sql)
+    if 'permission denied' not in result:
+      match = _SQL_VALUE_RE.search(result)
+      if match:
+        value = match.group(1)
+        if value.lower().startswith("t"):
+          return True
+        else:
+          return False
+      else:
+        return None
+    else:
+      return None # not available in non-eng bules.
+
+  def UpdateSyncSettings(self):
+    rv = dictlib.AttrDict()
+    sql = 'select * from settings;'
+    result = SQLQuery(self._controller, self.SYNCSETTINGSDB, sql)
+    if 'permission denied' not in result:
+      for line in result.splitlines():
+        name, value = line.split("|", 1)
+        if value.lower().startswith("t"):
+          rv[name] = True
+        else:
+          rv[name] = False
+    self._sync_settings = rv
+    self._UpdateSyncState()
+
+  def _UpdateSyncState(self):
+    # a fresh install won't have this entry, but seems to default to True.
+    if self._sync_settings.get("listen_for_tickles", True):
+      self.StateON("sync")
+      self.StateON("xmpp")
+    else:
+      self.StateOFF("sync")
+      self.StateOFF("xmpp")
+
+  def UpdateSystemSettings(self):
+    rv = dictlib.AttrDict()
+    sql = 'select * from system;'
+    result = SQLQuery(self._controller, self.SETTINGSDBFILE, sql)
+    if 'permission denied' not in result:
+      for line in result.splitlines():
+        pkey, name, value = line.split("|", 2)
+        try:
+          value = int(value)
+        except ValueError:
+          pass
+        rv[name] = value
+    self._system_settings = rv
+
+  def CopyFileToDevice(self, lpath, rpath):
+    self._controller.Push(lpath, rpath)
+
+  def CopyFileFromDevice(self, lpath, rpath):
+    self._controller.Pull(lpath, rpath)
 
 
 class SoonerDevice(AndroidDevice):
@@ -1132,22 +1328,28 @@ class DreamDevice(AndroidDevice):
       raise errors.OperationalError("Reboot: no usb connection.")
 
   def AnswerCall(self, delay=1.0):
-    self.PressKey(231, 0)
-    self.PressKey(231, delay)
+    self.PressKey(231, 0, hold=0.1)
+    scheduler.sleep(2)
+    self.BackKey() # in case we are in dialpad
 
-  def Call(self, number="6502849239"):
+  def Call(self, number):
     if self._controller is not None:
+      doclose = 0
       self.Unlock()
       self.HomeKey()
       self.CallKey()
-      if self._states.lid == OFF: # open
-        self.Touch(3000, 300)
-      else:
-        self.Touch(300, 300)
+      # currently, the device only "takes" keyboard input when lid is open.
+      if self._states.lid == ON: # closed
+        self.OpenLid()
+        doclose = 1
+      self.Touch(3000, 300)
       scheduler.sleep(2)
       self._keygenerator(number)
       self.CallKey()
       self.CallActive()
+      if doclose:
+        scheduler.sleep(2)
+        self.CloseLid()
     else:
       raise errors.OperationalError("Call: no usb connection.")
 
@@ -1309,8 +1511,7 @@ class DreamDevice(AndroidDevice):
 
   def ToggleSyncState(self):
     self.Unlock()
-    self.Start("com.android.settings/"
-        "com.android.settings.SyncSettings")
+    self.Start("com.android.settings/com.android.settings.SyncSettings")
     scheduler.sleep(2.0)
     self.DownKey() # activate nav mode without doing anything else
     self.UpKey()
@@ -1318,40 +1519,135 @@ class DreamDevice(AndroidDevice):
     self.CenterKey() # toggle master setting
     scheduler.sleep(1.0)
     self.BackKey()
-    self.ToggleState("sync")
-    self.ToggleState("xmpp")
+    scheduler.sleep(1.0)
+    self.UpdateSyncSettings()
+
+  def SetSyncON(self):
+    count = 0
+    while self.IsStateOFF("sync"):
+      self.ToggleSyncState()
+      count += 1
+      if count > 3:
+        raise errors.OperationalError("Failed to set sync on")
+
+  def SetSyncOFF(self):
+    count = 0
+    while self.IsStateON("sync"):
+      self.ToggleSyncState()
+      count += 1
+      if count > 3:
+        raise errors.OperationalError("Failed to set sync off")
+
+  def SetWifiON(self):
+    count = 0
+    while self.IsStateOFF("wifi"):
+      self.ToggleWifiState()
+      count += 1
+      if count > 3:
+        raise errors.OperationalError("Failed to set wifi on")
+
+  def SetWifiOFF(self):
+    count = 0
+    while self.IsStateON("wifi"):
+      self.ToggleWifiState()
+      count += 1
+      if count > 3:
+        raise errors.OperationalError("Failed to set wifi off")
+
+  def WifiReset(self):
+    """Set DUT wifi settings to factory default."""
+    cmd = ("cat /system/etc/wifi/wpa_supplicant.conf >"
+        "/data/misc/wifi/wpa_supplicant.conf")
+    self._controller.ShellCommand(cmd)
+
+  def SetBluetoothON(self):
+    count = 0
+    while self.IsStateOFF("bluetooth"):
+      self.ToggleBluetoothState()
+      count += 1
+      if count > 3:
+        raise errors.OperationalError("Failed to set bluetooth on")
+
+  def SetBluetoothOFF(self):
+    count = 0
+    while self.IsStateON("bluetooth"):
+      self.ToggleBluetoothState()
+      count += 1
+      if count > 3:
+        raise errors.OperationalError("Failed to set bluetooth off")
+
+  def SetAirplaneON(self):
+    count = 0
+    while self.IsStateOFF("airplane"):
+      self.ToggleAirplaneMode()
+      count += 1
+      if count > 3:
+        raise errors.OperationalError("Failed to set airplane on")
+
+  def SetAirplaneOFF(self):
+    count = 0
+    while self.IsStateON("airplane"):
+      self.ToggleAirplaneMode()
+      count += 1
+      if count > 3:
+        raise errors.OperationalError("Failed to set airplane off")
 
   def ToggleWifiState(self):
+    btstate = self._states.bluetooth
+    apstate = self._states.airplane
     self.Unlock()
-    self.StartSettings()
-    self.DownKey() # activates nav mode
-    self.UpKey() 
+    self.StartWirelessSettings()
+    self.UpKey()  # activates nav mode
+    self.UpKey()
+    scheduler.sleep(1.0)
     self.CenterKey()
-    scheduler.sleep(3.0)
+    scheduler.sleep(5.0)
     self.BackKey()
-    self.ToggleState("wifi")
+    self.UpdateAllStates()
+    if btstate != self._states.bluetooth:
+      raise errors.OperationalError("Accidental state change for bluetooth")
+    if apstate != self._states.airplane:
+      raise errors.OperationalError("Accidental state change for airplane")
 
   def ToggleBluetoothState(self):
+    wifistate = self._states.wifi
+    apstate = self._states.airplane
     self.Unlock()
-    self.StartSettings()
+    self.StartWirelessSettings()
     self.UpKey()
-    for i in range(5):
-      self.DownKey()
+    self.UpKey()
+    scheduler.sleep(1.0)
+    self.DownKey()
+    self.DownKey()
     self.CenterKey()
-    scheduler.sleep(3.0)
+    scheduler.sleep(4.0)
     self.BackKey()
-    self.ToggleState("bluetooth")
+    self.UpdateAllStates()
+    if wifistate != self._states.wifi:
+      raise errors.OperationalError("Accidental state change for wifi")
+    if apstate != self._states.airplane:
+      raise errors.OperationalError("Accidental state change for airplane")
 
   def ToggleAirplaneMode(self):
+    wifistate = self._states.wifi
+    btstate = self._states.bluetooth
     self.Unlock()
-    self.StartSettings()
+    self.StartWirelessSettings()
     self.UpKey()
+    self.UpKey()
+    scheduler.sleep(1.0)
+    self.DownKey()
+    self.DownKey()
     self.DownKey()
     self.DownKey()
     self.CenterKey()
-    scheduler.sleep(3.0)
+    scheduler.sleep(4.0)
     self.BackKey()
-    self.ToggleState("airplane")
+    self.UpdateAllStates()
+    if wifistate != self._states.wifi:
+      raise errors.OperationalError("Accidental state change for wifi")
+    if btstate != self._states.bluetooth:
+      raise errors.OperationalError("Accidental state change for bluetooth")
 
   def SetupWizard(self, name, password, use_ui=False):
     if use_ui:
@@ -1364,8 +1660,8 @@ class DreamDevice(AndroidDevice):
       kbd(password)
       kbd("<ENTER>")
       scheduler.sleep(1.0)
-      self.RightKey()
-      self.CenterKey()
+#      self.RightKey()
+#      self.CenterKey()
     else:
       sql = ("DELETE FROM accounts;\n "
           "INSERT INTO accounts (username, password, flags) "
@@ -1376,15 +1672,6 @@ class DreamDevice(AndroidDevice):
       self._controller.ShellCommand(cmd)
     self.SetAccount(name, password)
 
-  def SetGservicesSetting(self, name, value):
-    sql = "insert into gservices(name,value) values ('%s','%s');" % (name, value)
-    return SQLQuery(self._controller, self.SETTINGSDBFILE, sql)
-
-  def GetGservicesSetting(self, name):
-    sql = "select 'VALUE['||value||']' from gservices where name='%s';" % name
-    result = SQLQuery(self._controller, self.SETTINGSDBFILE, sql)
-    match = _SQL_VALUE_RE.search(result)
-    return match and match.group(1) or ""
 
 _SQL_VALUE_RE = re.compile(r"VALUE\[(.*)\]")
 
@@ -1430,9 +1717,9 @@ _DREAM_KEYMAP_V3 = {
    u'ç': SHIFT | ALT | event.KEY_C,
    u' ́': SHIFT | ALT | event.KEY_E, # combining
    u'¥': SHIFT | ALT | event.KEY_F,
-   u'€': SHIFT | ALT | event.KEY_R,
+   u'€': SHIFT | ALT | event.KEY_T,
    u'ß': SHIFT | ALT | event.KEY_S,
-   u'£': SHIFT | ALT | event.KEY_T,
+   u'£': SHIFT | ALT | event.KEY_R,
    u'…': SHIFT | ALT | event.KEY_DOT,
    u'•': SHIFT | ALT | event.KEY_EMAIL,
    u'¡': SHIFT | ALT | event.KEY_Y,
@@ -1487,17 +1774,20 @@ _DREAM_KEYMAP_V2 = {
 
 _EVENTDEV_RE = re.compile(r"add device (\d+): /dev/input/event(\d+)")
 _KEYPADNAME_RE = re.compile(r"(\w+)-keypad-v(\d)")
+_PROP_RE = re.compile(r'\[([^\]]+)\]: \[([^\]]*)\]')
+
 
 def GetDeviceClass(devid):
   adbclient = adb.AdbClient()
   controller = adbclient.GetDevice(devid)
-  devrpt = controller.ShellCommandOutput("getevent -S")
+  devrpt = controller.ShellCommandOutput("/system/bin/getevent -S")
   pstate = 0
   devmap = {}
+  klass = None
   for line in devrpt.splitlines():
-    mo = _EVENTDEV_RE.search(line)
-    if mo:
-      devnum = int(mo.group(2))
+    eventmatch = _EVENTDEV_RE.search(line)
+    if eventmatch:
+      devnum = int(eventmatch.group(2))
       pstate = 1
     elif pstate == 1:
       pstate = 0
@@ -1525,6 +1815,8 @@ def GetDeviceClass(devid):
         devmap[name.split("-")[1]] = devnum
       else:
         devmap[name] = devnum
+  if klass is None:
+    raise adb.AdbError("Cannot determine model.")
   klass._INPUTMAP = devmap
   return klass
 
@@ -1542,7 +1834,8 @@ def GetDevice(device_id):
     pass # probably a serial no. string
   try:
     devclass = GetDeviceClass(device_id)
-  except adb.AdbError:
+  except adb.AdbError, err:
+    print >>sys.stderr, "GetDevice: %s" % (err,)
     return None
   else:
     return devclass(device_id)

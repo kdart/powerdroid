@@ -1,22 +1,8 @@
 #!/usr/bin/python2.4
 # -*- coding: us-ascii -*-
 # vim:ts=2:sw=2:softtabstop=0:tw=74:smarttab:expandtab
-
-# Copyright (C) 2008 The Android Open Source Project
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#      http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-
+# Copyright The Android Open Source Project
 
 """Command tool for talking to GPIB instruments.
 
@@ -38,7 +24,7 @@ from droid.instruments import gpib
 class TopLevel(CLI.BaseCommands):
 
   def _reset_scopes(self):
-    eq = core.GENERICMAP.keys() + self._obj.keys()
+    eq = self._obj.GENERICMAP.keys() + self._obj.INSTRUMENTS.keys()
     eq.sort()
     self.add_completion_scope("use", eq)
     self.add_completion_scope("clear", eq)
@@ -72,12 +58,12 @@ class TopLevel(CLI.BaseCommands):
   def ls(self, argv):
     """ls
   Show available devices."""
-    self._print_list(self._obj.keys())
+    self._print_list(self._obj.INSTRUMENTS.keys())
 
   def reset(self, argv):
     """reset <name>
   Reset the device."""
-    name = argv[1]
+    devname = argv[1]
     inst = core.GetInstrument(devname)
     try:
       inst.Reset()
@@ -158,7 +144,10 @@ class GenericInstrument(GpibCLI):
   def read(self, argv):
     """read
   Read from the device. May block."""
-    self._print(self._obj.read())
+    if len(argv) > 1:
+      self._print(self._obj.read(int(argv[1])))
+    else:
+      self._print(self._obj.read())
 
   def errors(self, argv):
     """errors
@@ -263,20 +252,20 @@ def instrumentshell(argv):
   Provides an interactive session to the GPIB bus.
 
   Options:
-   -?    = This help text.
-   -g    = used paged output (like 'more').
-   -d    = Enable debugging.
+   -?, -h  = This help text.
+   -g      = used paged output (like 'more').
+   -d      = Enable debugging.
 
 """
   paged = False
 
   try:
-    optlist, longopts, args = getopt.getopt(argv[1:], "?gd")
-  except GetoptError:
+    optlist, longopts, args = getopt.getopt(argv[1:], "?hgd")
+  except getopt.GetoptError:
       print instrumentshell.__doc__
       return
   for opt, val in optlist:
-    if opt == "-?":
+    if opt in ("-?", "-h"):
       print instrumentshell.__doc__
       return
     elif opt == "-g":
@@ -294,7 +283,7 @@ def instrumentshell(argv):
   env.evalupdate(longopts)
   ui = CLI.UserInterface(io, env)
 
-  conf = core.INSTRUMENTS # TODO(dart) use real config
+  conf = core._GetConfig()
   cmd = TopLevel(ui)
   cmd._setup(conf, "pdish> ")
 

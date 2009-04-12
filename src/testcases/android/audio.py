@@ -1,22 +1,8 @@
 #!/usr/bin/python2.4
 # -*- coding: us-ascii -*-
 # vim:ts=2:sw=2:softtabstop=0:tw=74:smarttab:expandtab
-
-# Copyright (C) 2008 The Android Open Source Project
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#      http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-
+# Copyright The Android Open Source Project
 
 """One-line documentation for XXX module.
 
@@ -26,13 +12,68 @@ A detailed description of XXX.
 __author__ = 'dart@google.com (Keith Dart)'
 
 
-from droid.qa import core
-from testcases.android import interactive
 from testcases.android import common
 
 
+class BasicBluetooth(common.DroidBaseTest):
 
-class DownlinkAudioSINAD(interactive.AndroidInteractiveMixin, core.Test):
+  """
+Purpose
++++++++
+
+Verify basic bluetooth headset connectivity.
+
+Pass criteria
++++++++++++++
+
+A phone call is made and bluetooth headset can answer call.
+
+
+Start Condition
++++++++++++++++
+
+No voice call is active.
+
+
+End Condition
++++++++++++++
+
+No change.
+
+
+Reference
++++++++++
+
+
+Prerequisites
++++++++++++++
+
+testcases.android.common.DeviceSetup
+
+Procedure
++++++++++
+
+Initiate a voice call from the network (simulator). 
+Verify call is active.
+
+"""
+
+  PREREQUISITES = ["testcases.android.common.DeviceSetup"]
+
+  def Execute(self):
+    cf = self.config
+    if not cf.bttestsets.use:
+      return self.Incomplete("Bluetooth not in use.")
+    DUT = cf.environment.DUT
+    bttestset = cf.environment.bttestset
+    self.MakeACall(user=False)
+    if not bttestset.IsCallActive():
+      return self.Failed("Bluetooth headset indicates no active call.")
+    self.HangupCall()
+    return self.Passed("Bluetooth headset was active.")
+
+
+class DownlinkAudioSINAD(common.DroidBaseTest):
 
   """
 Purpose
@@ -72,9 +113,10 @@ Procedure
 Set testset MS audio path to ECHO.
 Set bluetooth test set audio path to INOUT
 
-
-
 """
+
+  PREREQUISITES = ["testcases.android.audio.BasicBluetooth"]
+
   def Execute(self):
     cf = self.config
     if not cf.bttestsets.use:
@@ -127,17 +169,22 @@ Set bluetooth test set audio path to INOUT
       return self.Incomplete("Did not get good reading.")
 
 
-class AudioSuite(core.TestSuite):
+
+#Bluetooth
+#speaker/mic
+#speakerphone
+#external headset (HTC)
+#MP3 playback
+#in-call
+#Volume controls
+#Silent mode
+
+
+class AudioSuite(common.DroidTestSuite):
   pass
 
 def GetSuite(conf):
   suite = AudioSuite(conf)
-  if not conf.get("skipsetup", False):
-    suite.AddTest(common.DeviceSetup)
-    # TODO(dart) fixme: monkey patch for now, this should be automatic.
-    core.InsertOptions(DownlinkAudioSINAD)
-    opts = DownlinkAudioSINAD.OPTIONS
-    opts.prerequisites = [core.PreReq("testcases.android.common.DeviceSetup")]
   suite.AddTest(DownlinkAudioSINAD)
   return suite
 

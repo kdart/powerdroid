@@ -1,0 +1,118 @@
+# python config file
+# vim:ts=2:sw=2:softtabstop=2:smarttab:expandtab:ft=python
+
+from pycopia.dictlib import AttrDict
+
+
+INSTRUMENTS = {
+  "controller": AttrDict(
+        object="droid.instruments.gpib.GpibController",
+        gpibname="gpib0"),
+  "fluke45": AttrDict(
+        object="droid.instruments.multimeter.Fluke45",
+        port="/dev/ttyS0",
+        serial="9600 8N1",
+        clicommands="droid.instruments.serialCLI.SerialInstrumentCLI",
+        prompt="=>\r\n"),
+  "ps1": AttrDict(
+        object="droid.instruments.powersupply.Ag66319D",
+        clicommands="droid.instruments.powersupplyCLI.Ag66319D_CLI",
+        gpibboard=0, gpibpad=7,
+        gpibname="ps1"),
+  "ps1dvm": AttrDict(
+        object="droid.instruments.powersupply.Ag66319dDVM",
+        gpibboard=0, gpibpad=7,
+        gpibname="ps1"),
+  "ps2": AttrDict(
+        object="droid.instruments.powersupply.Ag66319D",
+        clicommands="droid.instruments.powersupplyCLI.Ag66319D_CLI",
+        gpibboard=0, gpibpad=5,
+        gpibname="ps2"),
+  "ps2dvm": AttrDict(
+        object="droid.instruments.powersupply.Ag66319dDVM",
+        clicommands="droid.instruments.powersupplyCLI.Ag66319D_CLI",
+        gpibboard=0, gpibpad=5,
+        gpibname="ps2"),
+  "n4010a": AttrDict(
+        object="droid.instruments.testset.N4010a",
+        clicommands="droid.instruments.testsetCLI.N4010aCLI",
+        gpibboard=0, gpibpad=15,
+        gpibname="n4010a"),
+  "n4010a_afgen": AttrDict(
+        object="droid.instruments.testset.N4010aAudioGenerator",
+        clicommands="droid.instruments.testsetCLI.N4010aAudioGeneratorCLI",
+        gpibboard=0, gpibpad=15,
+        gpibname="n4010a"),
+  "n4010a_afana": AttrDict(
+        object="droid.instruments.testset.N4010aAudioAnalyzer",
+        clicommands="droid.instruments.testsetCLI.N4010aAudioAnalyzerCLI",
+        gpibboard=0, gpibpad=15,
+        gpibname="n4010a"),
+  "ag8960": AttrDict(
+        object="droid.instruments.testset.Ag8960GSM",
+        clicommands="droid.instruments.testsetCLI.Ag8960CLI",
+        gpibboard=0, gpibpad=14,
+        gpibname="ag8960"),
+  "ag8960_cdma": AttrDict(
+        object="droid.instruments.testset.Ag8960WCDMA",
+        clicommands="droid.instruments.testsetCLI.Ag8960CDMACLI",
+        gpibboard=0, gpibpad=14,
+        gpibname="ag8960"),
+  "ag8960_afgen": AttrDict(
+        object="droid.instruments.testset.Ag8960AudioGenerator",
+        clicommands="droid.instruments.testsetCLI.Ag8960_AFG_CLI",
+        gpibboard=0, gpibpad=14),
+  "ag8960_afana": AttrDict(
+        object="droid.instruments.testset.Ag8960AudioAnalyzer",
+        clicommands="droid.instruments.testsetCLI.Ag8960_AFA_CLI",
+        gpibboard=0, gpibpad=14),
+  "ag8960_mtgen": AttrDict(
+        object="droid.instruments.testset.Ag8960MultitoneAudioGenerator",
+        clicommands="droid.instruments.testsetCLI.Ag8960_MTG_CLI",
+        gpibboard=0, gpibpad=14),
+  "ag8960_mtana": AttrDict(
+        object="droid.instruments.testset.Ag8960MultitoneAudioAnalyzer",
+        clicommands="droid.instruments.testsetCLI.Ag8960_MTA_CLI",
+        gpibboard=0, gpibpad=14),
+  "ag8960_mstxpower": AttrDict(
+        object="droid.instruments.testset.TransmitPowerMeasurer",
+        clicommands="droid.instruments.testsetCLI.MeasurerCLI",
+        gpibboard=0, gpibpad=14),
+  "dpo4104": AttrDict( # uses USBTMC
+        object="droid.instruments.oscilloscope.TekDPO4104Oscilloscope",
+        clicommands="droid.instruments.oscilloscope_cli.TekDPOCLI",
+        manufacturer="Tektronix",
+        model="DPO4104"),
+  "enfora": AttrDict(
+        object="droid.instruments.modems.EnforaModem",
+        port="/dev/ttyS0",
+        serial="57600 8N1",
+        clicommands="droid.instruments.modems_cli.ModemsCLI",
+        prompt="OK\r\n"),
+  "mock": AttrDict(object="droid.instruments.mocks.MockDevice"),
+}
+
+
+# Used to map generic names to specific equipment.
+GENERICMAP = {
+  "afgenerator1": "ag8960_afgen",
+  "afgenerator2": "n4010a_afgen",
+  "afanalyzer1": "ag8960_afana",
+  "afanalyzer2": "n4010a_afana",
+  "multitonegen": "ag8960_mtgen",
+  "multitoneana": "ag8960_mtana",
+  "mstxpower": "ag8960_mstxpower",
+  "powersupply": "ps1",
+  "dvm": "ps1dvm",
+  "bttestset": "n4010a",
+  "testset": "ag8960",
+  "cdmatestset": "ag8960_cdma",
+  "multimeter": "fluke45",
+  "voltmeter": "fluke45",
+  "currentmeter": "fluke45",
+  "cell_simulator": "ag8960",
+  "oscilloscope": "dpo4104",
+  "modem": "enfora",
+}
+
+

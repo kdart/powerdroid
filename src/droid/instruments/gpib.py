@@ -1,22 +1,8 @@
 #!/usr/bin/python2.4
 # -*- coding: us-ascii -*-
 # vim:ts=2:sw=2:softtabstop=0:tw=74:smarttab:expandtab
-
-# Copyright (C) 2008 The Android Open Source Project
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#      http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-
+# Copyright The Android Open Source Project
 #
 
 """Alternative wrapper for linux-gpib driver and C library.
@@ -44,7 +30,6 @@ TIMEOUTS = Enums( "TNever", "T10us", "T30us", "T100us", "T300us",
 (TNever, T10us, T30us, T100us, T300us,
 T1ms, T3ms, T10ms, T30ms, T100ms, T300ms,
 T1s, T3s, T10s, T30s, T100s, T300s, T1000s) = TIMEOUTS
-
 
 # Status (sta) bits.
 # http://linux-gpib.sourceforge.net/doc_html/r625.html
@@ -126,7 +111,6 @@ class GpibDevice(object):
     The context must have an attribute "gpibname", matching a name in the
     /etc/gpib.conf file.
     """
-    global _gpib_module
     if devspec is not None:
       self._id = _gpib.ibdev(devspec.gpibboard, devspec.gpibpad)
       self._set_timeout(T3s)
@@ -142,10 +126,12 @@ class GpibDevice(object):
     return str(self.identify()).strip()
 
   def close(self):
-    self._gpib_module = None
     if self._id is not None:
-      _gpib.close(self._id)
+      self._gpib_module.close(self._id)
       self._id = None
+    self._gpib_module = None
+
+  closed = property(lambda self: self._id is None)
 
   def GetConfig(self, option):
     try:
@@ -169,6 +155,8 @@ class GpibDevice(object):
     return self._timeout
 
   def _set_timeout(self,  value):
+    if type(value) is str:
+      value = TIMEOUTS.findstring(value)
     if value not in TIMEOUTS:
       raise ValueError, "Bad timeout value: %r" % value
     self._timeout = value
@@ -269,8 +257,7 @@ class GpibInstrument(GpibDevice):
     _gpib.trg(self._id)
 
   def ask(self, string, length=65536):
-    _gpib.write(self._id, string)
-    return _gpib.readbin(self._id, length)
+    return _gpib.ask(self._id, length, string)
 
   def send(self, string):
     _gpib.wait(self._id, CMPL)

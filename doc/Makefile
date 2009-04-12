@@ -1,8 +1,12 @@
 
-TARGETS=INSTALL.html
+# Built targets from RST files.
+TARGETS=INSTALL.html 
 
-DOCROOT=/var/www/htdocs
+DOCROOT=/var/www/powerdroid
+
 RST2HTML=/usr/bin/rst2html.py
+
+# The stylesheet link that will be placed within the built html docs.
 STYLESHEET=/media/css/documents.css
 
 all: $(TARGETS)
@@ -10,9 +14,9 @@ all: $(TARGETS)
 install: install-docs
 
 install-docs: $(TARGETS)
-	@sudo mkdir -p $(DOCROOT)/doc
-	@sudo sh -c 'for F in $?; do cp $$F $(DOCROOT)/doc ; done'
-	
+	@sudo mkdir -p $(DOCROOT)
+	@sudo sh -c 'for F in $?; do cp $$F $(DOCROOT) ; done'
+
 clean:
 	@for F in $(TARGETS); do rm -f $$F ; done
 

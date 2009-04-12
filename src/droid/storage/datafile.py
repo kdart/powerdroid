@@ -1,22 +1,8 @@
 #!/usr/bin/python2.4
 # -*- coding: us-ascii -*-
 # vim:ts=2:sw=2:softtabstop=0:tw=74:smarttab:expandtab
-
-# Copyright (C) 2008 The Android Open Source Project
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#      http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-
+# Copyright The Android Open Source Project
 
 """Module that encapsulates how data files are encoded and decoded.
 
@@ -42,12 +28,15 @@ ON = constants.ON
 OFF = constants.OFF
 UNKNOWN = constants.UNKNOWN
 
-_STATE_RE = re.compile("(\w+)(ON|OFF|UNKNOWN)")
+_STATE_RE = re.compile(r"(\w+)(ON|OFF|UNKNOWN)")
 _STATEMAP = {
   "ON": ON,
   "OFF": OFF,
   "UNKNOWN": UNKNOWN,
 }
+
+_DATA_RE = re.compile(r"([a-z]+)([A-Z0-9]+)")
+
 
 def GetDirectoryName(config):
   build = config.environment.DUT.build
@@ -57,20 +46,15 @@ def GetDirectoryName(config):
       build.type, 
       build.id)
 
-def GetFileName(testcase, **extra):
+def GetFileName(metadata):
   """Construct full data path name from a test case instance.
 
   Returns a tuple of directory name and file name.
   """
-  cf = testcase.config
-  DUT = cf.environment.DUT
-
-  fname = "%s-%s-%s-%s-%s.dat" % (
-      testcase.__class__.__name__,
-      testcase.GetStartTimestamp(),
-      "-".join(DUT.statestrings + ["%s%s" % t for t in extra.items()]),
-      cf.powersupplies.get("subsamples", 0),
-      int(cf.powersupplies.get("voltage", 0.0) * 100),
+  fname = "%s-%s-%s.dat" % (
+      metadata.pop("testname"),
+      metadata.pop("starttime"),
+      "-".join(["%s%s" % t for t in metadata.items()]),
       )
   return fname
 
@@ -108,13 +92,15 @@ def DecodeFullPathName(pathname):
     try:
       data.voltage = float(nameparts[endoffset].split(".")[0]) / 100.0
     except (ValueError, TypeError, IndexError):
-      data.rollup = timespec.parse_timespan(nameparts[endoffset].split(".")[0])
-      endoffset -= 1
+      try:
+        data.rollup = timespec.parse_timespan(nameparts[endoffset].split(".")[0])
+        endoffset -= 1
+      except ValueError:
+        data.rollup = 0
       try:
         data.voltage = float(nameparts[endoffset].split(".")[0]) / 100.0
       except (ValueError, TypeError, IndexError):
         data.voltage = 0.0
-
     endoffset -= 1
     try:
       data.samples = int(nameparts[endoffset])
@@ -126,7 +112,11 @@ def DecodeFullPathName(pathname):
       if mo:
         data[mo.group(1)] = _STATEMAP[mo.group(2)]
       else:
-        print >>sys.stderr, "Warning: part not matched: %r" % (part,)
+        mo = _DATA_RE.match(part)
+        if mo:
+          data[mo.group(1)] = mo.group(2)
+        else:
+          print >>sys.stderr, "Warning: name component not matched: %r" % (part,)
 
   return data
 
@@ -158,13 +148,44 @@ class DataFileData(dictlib.AttrDict):
         s.append("%14.14s: %s" % (name, value))
     return "\n  ".join(s)
 
+  # two metadata compare equal iff states are equal.
+  def __eq__(self, other):
+    for name, value in self._GetStates().items():
+      try:
+        if other[name] != value:
+          return False
+      except KeyError:
+        return False
+    return True
+
+  def __ne__(self, other):
+    return not self.__eq__(other)
+
+  def Compare(self, other, missingok=True):
+    for name, value in self._GetStates().items():
+      try:
+        if other[name] != value:
+          return False
+      except KeyError:
+        if not missingok:
+          return False
+    return True
+
+  def CompareData(self, other, namelist, missingok=True):
+    for name in namelist:
+      try:
+        if other[name] != self[name]:
+          return False
+      except KeyError:
+        if not missingok:
+          return False
+    return True
+
   def GetFileName(self, base):
-    fname = "%s-%s-%s-%s-%s%s.txt" % (
+    fname = "%s-%s-%s%s.txt" % (
       base,
       self.timestamp.strftime("%m%d%H%M%S"),
       "-".join(self.GetStateStrings()),
-      self.get("samples", 0),
-      int(self.get("voltage", 0) * 100),
       aid.IF(self.rollup, "-%ssec" % int(self.rollup), ""),
       )
     return fname
@@ -189,8 +210,12 @@ class DataFileData(dictlib.AttrDict):
   def GetStateString(self, *names):
     s = []
     for name in names:
-      value = self[name]
-      s.append("%s%s" % (name, value))
+      try:
+        value = self[name]
+      except KeyError:
+        pass
+      else:
+        s.append("%s%s" % (name, value))
     return "-".join(s)
 
 

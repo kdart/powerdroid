@@ -1,0 +1,10 @@
+#!/usr/bin/python2.4
+#
+# Copyright The Android Open Source Project
+
+
+import sys
+from droid import splash
+
+splash.splash(sys.argv)
+

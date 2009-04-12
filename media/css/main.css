@@ -32,6 +32,12 @@ img {
 border:0pt none;
 }
 
+dl dt {
+  font-weight: bold }
+
+dl dd {
+  margin-bottom: 0.5em }
+
 .applet { 
   width:100%; min-width:760px; 
   padding:0; 
@@ -65,19 +71,31 @@ div#content {
   margin: 0px 0px 0px 200px; 
   z-index: 10;
 }
-div#content p {line-height:1.4}
+div#content p:first-child {
+    background: white; 
+    margin-left: 1.2in; 
+    margin-top: 1in; 
+    margin-bottom: 0.5in; 
+    font-weight: bold; 
+    line-height:1.4}
 
 div#navigation {
   background:#BACAEE none repeat scroll 0% 50%;
   float:left; 
   margin-top: 160px;
-  width:200px}
+  width:190px}
 
 div#extra {
   background:#DAA955 none repeat scroll 0% 50%;
   clear:left; 
   float:left; 
-  width:200px}
+  width:190px}
+
+div#extra p {
+  padding: 5px;
+  font-weight: bold; 
+  font-size: 10pt;
+}
 
 div#footer {
   clear:both; 
@@ -106,6 +124,7 @@ form label,input,select,textarea {
 
 /* tables */
 table { border-color:#ccc; width: 100%;}
+table caption { color: #1C5A92; background: #D8B344;}
 
 td, th { font-size:11px; 
 line-height:14px; 

@@ -1,21 +1,7 @@
 #!/usr/bin/python2.4
 # vim:ts=2:sw=2:softtabstop=0:tw=74:smarttab:expandtab
 
-
-# Copyright (C) 2008 The Android Open Source Project
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#      http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
+"""Top level test runner.
 
 This module provides the primary test runner for the automation framework.
 
@@ -306,9 +292,10 @@ class TestRunner(object):
         if not fname.startswith("<"): # a real file, not builtin stdio
           if os.path.isfile(fname):
             shutil.move(fname, cf.resultsdir)
-      if os.path.isfile(cf.logfilename):
-        if os.path.getsize(cf.logfilename) > 0:
-          shutil.move(cf.logfilename, cf.resultsdir)
+      for suffix in ("", ".1", ".2", ".3", ".4", ".5"): # log may have rotated
+        fname = cf.logfilename + suffix
+        if os.path.isfile(fname) and os.path.getsize(fname) > 0:
+          shutil.move(fname, cf.resultsdir)
       # If resultsdir ends up empty, remove it.
       if not os.listdir(cf.resultsdir): # TODO(dart), stat this instead
         os.rmdir(cf.resultsdir)

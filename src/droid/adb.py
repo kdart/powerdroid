@@ -1,22 +1,8 @@
 #!/usr/bin/python2.4
 # -*- coding: us-ascii -*-
 # vim:ts=2:sw=2:softtabstop=0:tw=74:smarttab:expandtab
-
-# Copyright (C) 2008 The Android Open Source Project
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#      http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-
+# Copyright The Android Open Source Project
 
 """Python client for using android adb.
 
@@ -28,12 +14,13 @@ commandline client.
 
 import os
 import zipfile
+import struct
+import stat
 from cStringIO import StringIO
 
 from pycopia import proctools
 from pycopia import scheduler
 from pycopia import socket
-from pycopia import expect
 from pycopia import dictlib
 from pycopia import timelib
 from pycopia import aid
@@ -61,6 +48,34 @@ ADB_PORT = 5037
 OFFLINE, BOOTLOADER, DEVICE, HOST, RECOVERY, UNKNOWN = (
   "offline", "bootloader", "device", "host", "recovery", "unknown")
 
+def _MKID(a, b, c, d):
+  return ((a) | ((b) << 8) | ((c) << 16) | ((d) << 24))
+# x86
+ID_STAT = _MKID(ord('S'), ord('T'), ord('A'), ord('T'))
+ID_LIST = _MKID(ord('L'), ord('I'), ord('S'), ord('T'))
+ID_ULNK = _MKID(ord('U'), ord('L'), ord('N'), ord('K'))
+ID_SEND = _MKID(ord('S'), ord('E'), ord('N'), ord('D'))
+ID_RECV = _MKID(ord('R'), ord('E'), ord('C'), ord('V'))
+ID_DENT = _MKID(ord('D'), ord('E'), ord('N'), ord('T'))
+ID_DONE = _MKID(ord('D'), ord('O'), ord('N'), ord('E'))
+ID_DATA = _MKID(ord('D'), ord('A'), ord('T'), ord('A'))
+ID_OKAY = _MKID(ord('O'), ord('K'), ord('A'), ord('Y'))
+ID_FAIL = _MKID(ord('F'), ord('A'), ord('I'), ord('L'))
+ID_QUIT = _MKID(ord('Q'), ord('U'), ord('I'), ord('T'))
+
+del _MKID
+
+_SYNCMSG = {
+  "id": ("I", struct.calcsize("I")),
+  "req": ("II", struct.calcsize("II")),        # id, namelen
+  "stat": ("IIII", struct.calcsize("IIII")),   # id, mode, size, time
+  "dent": ("IIIII", struct.calcsize("IIIII")), # id, mode, size, time, namelen
+  "data": ("II", struct.calcsize("II")),       # id, size
+  "status": ("II", struct.calcsize("II")),     # id, msglen
+}
+
+SYNC_DATA_MAX = 64 * 1024
+
 
 def StartServer(logfile=None):
   AdbCommand("start-server", logfile)
@@ -80,23 +95,6 @@ def AdbCommand(cmd, logfile=None):
   proc.close()
   status = proc.wait()
   return status, output, errors
-
-
-class ExpectSqlite3(expect.Expect):
-  def schema(self):
-    self.send(".schema\n")
-    return self.wait_for_prompt()
-
-
-class ExpectAdb(expect.Expect):
-
-  def sqlite3(self, filename, sql=None):
-    if sql is None:
-      self.send("sqlite3 -interactive %s\n")
-      return ExpectSqlite3(self._fo, prompt="sqlite> ")
-    else:
-      self.send('sqlite3 -batch %s "%s"\n' % (filename, sql))
-      return self.wait_for_prompt()
 
 
 class AdbClient(object):
@@ -157,11 +155,11 @@ class AdbClient(object):
     for n, line in enumerate(resp.splitlines()):
       parts = line.split("\t")
       if self._adb_version >= 19:
-        device = AdbDeviceClient(n+1, parts[0], parts[1], -1,
+        device = AdbDeviceClient(n+1, parts[0], parts[1],
             self._adb_version)
       else:
         device = AdbDeviceClient(int(parts[0]), parts[1], parts[2], 
-            int(parts[3]), self._adb_version)
+            self._adb_version)
       dm.Add(device)
     return dm
 
@@ -180,11 +178,10 @@ class AdbDeviceClient(AdbClient):
   """ADB Client for a specific device.
   """
 
-  def __init__(self, dev_id, serial_no, state, lock_id, adb_version):
+  def __init__(self, dev_id, serial_no, state, adb_version):
     self.device_id = dev_id
     self.serial = serial_no
     self.state = state
-    self.lock_id = lock_id
     self._adb_version = adb_version
     self._build = None
 
@@ -211,13 +208,12 @@ class AdbDeviceClient(AdbClient):
     sock.close()
 
   def __str__(self):
-    return "%s\t%s\t%s\t%s" % (
-        self.device_id, self.serial, self.state, self.lock_id)
+    return "%s\t%s\t%s" % (
+        self.device_id, self.serial, self.state)
 
   def __repr__(self):
-    return "%s(%r, %r, %r, %r, %r)" % (self.__class__.__name__,
-        self.device_id, self.serial, self.state, self.lock_id,
-        self._adb_version)
+    return "%s(%r, %r, %r, %r)" % (self.__class__.__name__,
+        self.device_id, self.serial, self.state, self._adb_version)
 
   def GetBuild(self):
     """Return a dictionary of build information from phone.
@@ -239,12 +235,12 @@ class AdbDeviceClient(AdbClient):
 
   build = property(GetBuild)
 
-  def GetShell(self, logfile=None):
-    s = self.Connect("shell:")
-    exp = ExpectAdb(s.makefile("w+", 1), prompt="# ", logfile=logfile)
-    exp.send("\n") # sync with prompt
-    exp.wait_for_prompt()
-    return exp
+#  def GetShell(self, logfile=None):
+#    s = self.Connect("shell:")
+#    exp = ExpectAdb(s.makefile("w+", 1), prompt="# ", logfile=logfile)
+#    exp.send("\n") # sync with prompt
+#    exp.wait_for_prompt()
+#    return exp
 
   def ShellCommand(self, cmd):
     sock = self.Connect("shell:%s" % (cmd,))
@@ -262,6 +258,12 @@ class AdbDeviceClient(AdbClient):
     while data:
       stream.write(data)
       data = sock.recv(4096)
+    sock.close()
+
+  def Remount(self):
+    """Remounts the /system partition on the device read-write."""
+    sock = self.Connect("remount:")
+    sock.recv(4096)
     sock.close()
 
   def IsRunning(self):
@@ -452,8 +454,11 @@ class AdbDeviceClient(AdbClient):
   def Buildprop(self, stream):
     self.RunCommand("cat /system/build.prop", stream)
 
-  def DumpSys(self, stream):
-    self.RunCommand("dumpsys", stream)
+  def DumpSys(self, stream, section=None):
+    if section:
+      self.RunCommand("dumpsys %s" % section, stream)
+    else:
+      self.RunCommand("dumpsys", stream)
 
   def BugReport(self, stream):
     if self._adb_version >= 19:
@@ -474,6 +479,159 @@ class AdbDeviceClient(AdbClient):
   == %s
   ========================================================
   """ % name)
+
+  def List(self, path, list_cb, cookie=0):
+    """List directory on device.
+
+    Calls list_cb for each directory entry:
+      list_cb(mode, size, time, name, cookie)
+    """
+    sock = self.Connect("sync:")
+    sock.write(struct.pack("II", ID_LIST, len(path)))
+    sock.write(path)
+    fmt, rsize = _SYNCMSG["dent"]
+    while 1:
+      data = sock.read(rsize)
+      rid, mode, size, time, namelen = struct.unpack(fmt, data)
+      if rid == ID_DONE:
+        break
+      if rid != ID_DENT:
+        sock.close()
+        raise AdbError("ID_DENT not returned for List")
+      name = sock.read(namelen)
+      list_cb(mode, size, time, name, cookie)
+    _SyncQuit(sock)
+    sock.close()
+
+  def Push(self, loc, rem, verifyApk=0):
+    """Push a file from local system to device."""
+    st = os.stat(loc)
+    if stat.S_ISREG(st.st_mode):
+      sock = self.Connect("sync:")
+      mode, fsize, ftime = _SyncReadmode(sock, rem)
+      if mode != 0 and stat.S_ISDIR(mode):
+        name = os.path.basename(loc)
+        rem = "%s/%s" % (rem, name)
+      try:
+        _SyncSend(sock, loc, rem, st.st_mtime, st.st_mode, verifyApk)
+        _SyncQuit(sock)
+      finally:
+        sock.close()
+    else:
+      raise AdbError("Push: source is not a regular file.")
+
+  def Pull(self, loc, rem):
+    sock = self.Connect("sync:")
+    mode, fsize, ftime = _SyncReadmode(sock, rem)
+    if mode == 0:
+      sock.close()
+      raise AdbError("Pull: remote file %r does not exist." % rem)
+    if stat.S_ISREG(mode) or stat.S_ISCHR(mode) or stat.S_ISBLK(mode):
+      # Given "loc" variable may be file or directory.
+      try:
+        lstat = os.stat(loc)
+      except OSError:
+        lpath, lname = os.path.split(loc)
+        os.stat(lpath) # will raise OSError again if directory also does not
+                       # exist.
+      else: # some file or directory exists.
+        # If directory, append remote name and use that as local name.
+        # Otherwise use local name as-is.
+        if stat.S_ISDIR(lstat.st_mode):
+          rpath, rname = os.path.split(rem)
+          loc = os.path.join(loc, rname)
+      try:
+        _SyncRecv(sock, loc, rem)
+        _SyncQuit(sock)
+      finally:
+        sock.close()
+    else: # TODO(dart) directory recursion
+      raise AdbError("Pull: remote file %r is not a file." % rem)
+
+
+def _SyncSend(sock, lpath, rpath, mtime, mode, verifyApk=0):
+  fo = open(lpath)
+  s = "%s,%d" % (rpath, mode)
+  sock.write(struct.pack("II", ID_SEND, len(s)))
+  sock.write(s)
+  data = fo.read(SYNC_DATA_MAX)
+  try:
+    while data:
+      sock.write(struct.pack("II", ID_DATA, len(data)))
+      sock.write(data)
+      data = fo.read(SYNC_DATA_MAX)
+  finally:
+    fo.close()
+  fmt, sizeof = _SYNCMSG["data"]
+  sock.write(struct.pack(fmt, ID_DONE, mtime))
+  rid, msglen = _SyncReadMessage(sock, "status")
+  if rid != ID_OKAY:
+    if rid == ID_FAIL:
+      reason = sock.read(msglen)
+      raise AdbError("Send error: %s" % (reason,))
+    else:
+      raise AdbError("Send error: unknown reason")
+
+
+def _SyncRecv(sock, lpath, rpath):
+  datafmt, datasize = _SYNCMSG["data"]
+  sock.write(struct.pack("II", ID_RECV, len(rpath)))
+  sock.write(rpath)
+  rid, size = struct.unpack(datafmt, sock.read(datasize))
+  if rid == ID_DATA or rid == ID_DONE:
+    try:
+      os.unlink(lpath)
+      os.makedirs(os.path.split(lpath)[0])
+    except OSError: # most likely exists
+      pass
+    outf = open(lpath, "w")
+    try:
+      _Copy(sock, outf, size)
+      while 1:
+        rid, size = struct.unpack(datafmt, sock.read(datasize))
+        if rid == ID_DONE:
+          break
+        if rid != ID_DATA:
+          try:
+            outf.close()
+            os.unlink(lpath)
+          except OSError:
+            pass
+          if rid == ID_FAIL:
+            reason = sock.read(size)
+          else:
+            reason = "unknown reason (%ld)" % (rid,)
+          raise AdbError("Recv error: %s" % (reason,))
+        else:
+          _Copy(sock, outf, size)
+    finally:
+      outf.close()
+
+
+def _Copy(sock, outf, size):
+  while size > 0:
+    data = sock.read(size)
+    outf.write(data)
+    size -= len(data)
+
+
+def _SyncQuit(sock):
+  sock.write(struct.pack("II", ID_QUIT, 0))
+
+
+def _SyncReadMessage(sock, msgtype):
+  fmt, sizeof = _SYNCMSG[msgtype]
+  return struct.unpack(fmt, sock.read(sizeof))
+
+
+def _SyncReadmode(sock, remotepath):
+  sock.write(struct.pack("II", ID_STAT, len(remotepath)))
+  sock.write(remotepath)
+  rid, mode, size, time = _SyncReadMessage(sock, "stat")
+  if rid != ID_STAT:
+    sock.close()
+    raise AdbError("ID_STAT not returned.")
+  return mode, size, time
 
 
 def _LogcatFile(fname, sock, bufsize):
@@ -568,7 +726,7 @@ class DeviceManager(object):
 
   def __str__(self):
     s = ["List of devices attached:"]
-    s.append("seq\tserial\tstate\tlock_id")
+    s.append("seq\tserial  \tstate")
     for dev in self._device_map.values():
       s.append(str(dev))
     return "\n".join(s)

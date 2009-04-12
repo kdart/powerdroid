@@ -1,22 +1,8 @@
 #!/usr/bin/python2.4
 # -*- coding: us-ascii -*-
 # vim:ts=2:sw=2:softtabstop=0:tw=74:smarttab:expandtab
-
-# Copyright (C) 2008 The Android Open Source Project
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#      http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-
+# Copyright The Android Open Source Project
 
 """Perform paced measurements or other functions.
 
@@ -51,10 +37,68 @@ from pycopia import asyncio
 from pycopia.OS import rtc  # Currenly, only Linux has this module.
 
 from droid.measure import core
+from droid.util import module
 
 
 class StopSequencer(Exception):
   pass
+
+
+class MeasureSet(list):
+  def Add(self, measurer, period="N", frequency=None, delay=0.0,
+      runtime=None):
+    self.append([measurer, period, frequency, delay, runtime])
+
+
+def ParseMeasureMode(context, mspec):
+  rv = MeasureSet()
+  defaultdatafilename = context.datafilename
+  for jobspec in mspec.split(","):
+    args, kwargs = ParseMeasureArgs(jobspec)
+    #         mclass, period, frequency, delay, runtime
+    callargs = [None, "N", None, 0.0, None]
+    for i, arg in enumerate(args):
+      callargs[i] = arg
+    for pos, kw in enumerate(("period", "frequency", "delay", "runtime")):
+      try:
+        arg = kwargs.pop(kw)
+      except KeyError:
+        pass
+      else:
+        callargs[pos + 1] = arg
+    classname = core.MEASUREALIAS.get(callargs[0].lower(), callargs[0])
+    mclass = module.GetObject(classname)
+    context.datafilename = kwargs.pop("datafile", defaultdatafilename)
+    measurer = mclass(context)
+    callargs[0] = measurer
+    rv.append(callargs)
+  return rv
+
+
+def ParseMeasureArgs(arguments):
+  args = []
+  kwargs = {}
+  targs = arguments.split(":")
+  for i, arg in enumerate(targs):
+    vals = arg.split("=", 1)
+    if len(vals) == 2:
+      kwargs[vals[0]] = _EvalArg(vals[1])
+    else:
+      args.append(_EvalArg(vals[0]))
+  return args, kwargs
+
+
+def _EvalArg(arg):
+  try:
+    return int(arg)
+  except ValueError:
+    try:
+      return float(arg)
+    except ValueError:
+      try:
+        return GetSecondsFromTimespec(arg)
+      except ValueError:
+        return arg # a special case string, most likely
 
 
 class _Sequencer(rtc.RTC, asyncio.PollerInterface):
@@ -62,7 +106,6 @@ class _Sequencer(rtc.RTC, asyncio.PollerInterface):
 
   def __init__(self, context):
     super(_Sequencer, self).__init__()
-    self._context = context
     self._tickrate = context.clockrate
     try:
       self.irq_rate_set(self._tickrate)
@@ -84,12 +127,12 @@ class _Sequencer(rtc.RTC, asyncio.PollerInterface):
   def close(self):
     self.Stop()
     self.Clear()
-    self._context = None
     super(_Sequencer, self).close()
 
   def Clear(self):
     self._sets = {}
     self._rates = set()
+    self._removedjobs = []
     self._ticks = 0
     self._lastvalue = None
     self._running = False
@@ -97,7 +140,7 @@ class _Sequencer(rtc.RTC, asyncio.PollerInterface):
   def read_handler(self):
     count, irq = self.read()
     if irq & rtc.RTC_PF:
-      while count > 0: # in case we missed one
+      while count > 0: # in case we missed an interrupt
         self._ticks += 1
         for rate in self._rates.copy():
           if self._ticks % rate == 0:
@@ -135,6 +178,8 @@ class _Sequencer(rtc.RTC, asyncio.PollerInterface):
     if not jl:
       del self._sets[ticks]
       self._rates.remove(ticks)
+    if oneshot and type(measurer) is not JobStarter: # XXX hack?
+      self._removedjobs.append(measurer) # save for later finalizing
     if not self._sets:
       raise core.AbortMeasurements("No more measurements to run.")
 
@@ -155,6 +200,9 @@ class _Sequencer(rtc.RTC, asyncio.PollerInterface):
       will be called after it is started. By default it runs until the
       sequencer is stopped.
     """
+    if not (period or frequency) and delay:
+      self.AddJob(self._GetOneshot(callback, delay))
+      return
     job = self._GetJob(callback, period, frequency)
     if delay:
       self.AddJob(self._GetOneshot(JobStarter(job), delay))
@@ -182,12 +230,30 @@ class _Sequencer(rtc.RTC, asyncio.PollerInterface):
       delay = GetSecondsFromTimespec(delay)
     return (callback, int(delay * self._tickrate), True)
 
+  def AddMeasureset(self, measureset):
+    """Add a pre-parsed measurement set."""
+    for mspec in measureset:
+      measurer, period, frequency, delay, runtime = mspec
+      if delay is None:
+        delay = 0.0
+      if type(period) is str:
+        specialmode = period[0].upper()
+        if specialmode == "F": # fast mode
+          self.AddFunction(measurer, measurer.measuretime, None, delay, runtime)
+        elif specialmode in "ND": # normal or default, use default delay
+          self.AddFunction(measurer, measurer.delaytime, None, delay, runtime)
+        else: 
+          self.AddFunction(measurer, GetSecondsFromTimespec(period), 
+              frequency, delay, runtime)
+      else:
+          self.AddFunction(measurer, period, frequency, delay, runtime)
+
   def Start(self):
     if not self._running:
       for rate in self._rates:
         for callback, oneshot in self._sets[rate]:
           if hasattr(callback, "Initialize"):
-            callback.Initialize(self._context)
+            callback.Initialize()
       asyncio.poller.register(self)
       self.periodic_interrupt_on()
       self._running = True
@@ -200,6 +266,11 @@ class _Sequencer(rtc.RTC, asyncio.PollerInterface):
         for callback, oneshot in self._sets[rate]:
           if hasattr(callback, "Finalize"):
             callback.Finalize()
+      # Finalize measurerers that were removed during the run.
+      while self._removedjobs:
+        callback = self._removedjobs.pop()
+        if hasattr(callback, "Finalize"):
+          callback.Finalize()
       self._running = False
 
   def Run(self):
@@ -230,7 +301,7 @@ def Sequencer(context):
   return _measurement_timer
 
 
-def Close():
+def SequencerClose():
   global _measurement_timer
   mt = _measurement_timer
   _measurement_timer = None
@@ -241,12 +312,46 @@ def _StopSequencer(timestamp, lastvalue):
   raise StopSequencer, timestamp
 
 
+def RunSequencer(context, measureset):
+  """Fetch, populate, run, and close the test sequencer.
+
+  The context is a measurement context configuration object.
+  The measureset is a sequence of tuples, each tuple represents the
+  arguments to the sequencer's AddFunction method.
+  """
+  seq = Sequencer(context)
+  seq.AddMeasureset(measureset)
+  try:
+    seq.Run()
+  finally:
+    SequencerClose()
+
+
+def RunMeasureSpec(context, measurespec):
+  measureset = ParseMeasureMode(context, measurespec)
+  if context.useprogress:
+    measureset.Add(core.TimeProgressMeter(context))
+  RunSequencer(context, measureset)
+
+
 class JobStarter(object):
   """Special handler that inserts a job when invoked, presumably after a
   delay.
   """
   def __init__(self, job):
     self.job = job
+
+  def Initialize(self):
+    try:
+      self.job[0].Initialize()
+    except AttributeError:
+      pass
+
+  def Finalize(self):
+    try:
+      self.job[0].Finalize()
+    except AttributeError:
+      pass
 
   def __call__(self, timestamp, value):
     _measurement_timer.AddJob(self.job)

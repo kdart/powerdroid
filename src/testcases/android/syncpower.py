@@ -1,22 +1,8 @@
 #!/usr/bin/python2.4
 # -*- coding: us-ascii -*-
 # vim:ts=2:sw=2:softtabstop=2:smarttab:expandtab
-
-# Copyright (C) 2008 The Android Open Source Project
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#      http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-
+# Copyright The Android Open Source Project
 #
 # Note that docstrings are in RST format:
 # <http://docutils.sourceforge.net/rst.html>.
@@ -37,13 +23,10 @@ __author__ = 'dart@google.com (Keith Dart)'
 __version__ = "$Revision$"
 
 
-from droid.qa import core
-from testcases.android import measurements
-from testcases.android import interactive
+from testcases.android import common
 
 
-class SyncPowerTest(interactive.AndroidInteractiveMixin, 
-        measurements.MeasurementsMixin, core.Test):
+class SyncPowerTest(common.DroidBaseTest):
   """
 Purpose
 +++++++
@@ -74,7 +57,7 @@ None
 Prerequisites
 +++++++++++++
 
-DeviceSetup
+testcases.android.common.DeviceSetup
 
 Procedure
 +++++++++
@@ -84,6 +67,7 @@ Add account using initial setup wizard.
 Measure current draw for one hour.
 
 """
+  PREREQUISITES = ["testcases.android.common.DeviceSetup"]
 
   def Execute(self):
     cf = self.config
@@ -92,18 +76,11 @@ Measure current draw for one hour.
     password = cf.account_password
     self.Info("Setting account %r." % (name,))
     DUT.SetupWizard(name, password)
-    self.Sleep(2)
-    self.DisconnectDevice()
-    try:
-      self.TakeCurrentMeasurements()
-    finally:
-      self.ConnectDevice()
-      DUT.ActivateUSB()
-
+    self.TakeCurrentMeasurements()
     return self.Passed("Measuring done.")
 
 
-class SyncPowerSuite(core.TestSuite):
+class SyncPowerSuite(common.DroidBaseSuite):
   pass
 
 

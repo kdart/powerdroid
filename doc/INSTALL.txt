@@ -1,8 +1,239 @@
 .. This document is in RST format <http://docutils.sourceforge.net/rst.html>.
-.. Copyright, Google, Inc.
+.. Copyright, The Android Open Source Project
 ..
 .. vim:ts=4:sw=4:softtabstop=4:smarttab:expandtab
-.. 
-======================
-Installing Power Droid
-======================
+
+============
+Installation
+============
+
+
+Overview
+========
+
+Powerdroid depends on a number of third-party, open-source packages.
+Unfortunately, installation is not the easiest since you have to install
+some of these packages from source code.
+
+Platform dependencies
+=====================
+
+The Powerdroid framework is developed and deployed on the Linux
+platform and is only guaranteed to run on that platform. It was initially
+developed on a Ubuntu system, but works on other Linux distributions as well.
+The instructions here, however, are for Ubuntu systems.
+
+
+Install instructions
+====================
+
+Package Dependencies
+--------------------
+
+In addition to the base installation, the following packages are required
+by Powerdroid.
+
+Required Ubuntu Packages
+--------------------------
+
+All of the Ubuntu Packages listed below can be installed by using the
+following command line::
+
+    sudo apt-get install <package name>
+
+Or, at your option, using a tool such as `dselect` or `synaptic`. 
+
+Note that this list may not include all the precedent dependencies
+(usually library packages). Those will be pulled in automatically when you
+execute `apt-get install`. 
+
+Some of these are only needed to compile Powerdroid and Pycopia without
+complaining, but are not actually used by Powerdroid.
+
+
+======================================   ================================
+Package Name                             Version
+======================================   ================================
+python2.4                                2.4.3-0ubuntu6
+python2.4-dev                            2.4.3-0ubuntu6
+python2.4-pyrex                          latest
+libreadline5-dev                         latest
+linux-gpib                               latest
+libsmi2                                  latest
+libsmi2-common                           latest
+libsmi2-dev                              latest
+======================================   ================================
+
+Required Non-Ubuntu Packages
+------------------------------
+
+The following packages are required but aren't available as a Ubuntu
+packages. 
+
+======================================   ================================   ==============================================================================================
+Package Name                             Version                            Remarks
+======================================   ================================   ==============================================================================================
+setuptools                               0.6c6                              This package must be installed before others
+pycopia                                  latest                             Not a downloadable package, see "Pycopia Installation" instructions below
+numpy                                    1.0.2                              Not a downloadable package, see "Numpy & Matplotlib installation" instructions below
+matplotlib                               0.90.1                             Not a downloadable package, see "Numpy & Matplotlib installation" instructions below
+Durus                                    3.6                                Used for configuration storage.
+======================================   ================================   ==============================================================================================
+
+Most of the Non-Ubuntu Packages use the Python `distutils` method of
+installation. The general steps are as follows. Start with the `setuptools`
+package, and for each other package perform the following steps:
+
+1. Copy the package to `/tmp` and go to that directory::
+
+    cp <file name> /tmp && cd /tmp
+
+2. Untar the package::
+
+    tar xzf <file name>
+
+3. Change directory to the package directory::
+
+    cd <newdir>
+
+4. Build the package::
+
+    python2.4 setup.py build
+
+5. Install the package::
+
+    sudo python2.4 setup.py install
+
+
+Numpy & Matplotlib installation
+-------------------------------
+
+For the packages `numpy` and `matplotlib`, use the commands below (as
+root):
+
+    sudo easy_install numpy
+
+    sudo easy_install matplotlib
+
+This will get you the latest version of each. Don't use the Ubuntu
+packages for these, they are older and won't work with Powerdroid.
+
+
+Pycopia installation
+--------------------
+
+Pycopia uses the PEAK setuptools_.  There is a couple of ways you can
+install it, depending on whether or not you need to keep keep up with
+development changes or just use snapshots or releases. Right now, it's in
+active development and keeping a source code workspace using subversion is
+probably the best option. That makes installing updates easier. 
+
+However, the version of setuptools that many of us have installed has a
+bug. You need to install an older, but stable version. Do this::
+
+    sudo easy_install setuptools==0.6c6
+
+
+
+Install Pycopia
+***************
+
+The `Pycopia project page`_ has instructions on how to get a subversion
+workspace. But, basically, do this::
+
+    SRC=$HOME/src # change to suit
+    mkdir -p $SRC
+    cd $SRC
+    svn checkout http://pycopia.googlecode.com/svn/trunk/ pycopia
+
+Note that if you put it in your home directory and your home directory is an
+NFS server you won't be able to install it due to permissions problems.
+
+Make sure the build dependencies are installed. Those are the libsmi
+and pyrex debian packages listed above.
+
+Then::
+
+    cd pycopia
+    sudo python setup.py install
+
+
+Now, in the future when updates are commited to Pycopia, you may need to
+perform the following commands from time to time::
+
+    cd $SRC/pycopia
+    svn update
+    sudo python setup.py install
+
+
+Powerdroid Installation
+------------------------
+
+Powerdroid may be installed onto the host directly from the Perforce
+repository, or from a source tarball. Since it provides a Python wrapper
+for two different GPIB libraries you must also set up your environment to
+select which one, if any, will be used.
+
+GPIB/IEEE-488 prerequisites
+***************************
+
+Powerdroid provides a Python interface to GPIB/IEEE-488 bus
+products. To use this you must have appropriate software and drivers
+already installed. 
+
+To build the Python GPIB wrapper you must already have either the
+linux-gpib package installed (if you are using, say, an Agilent USB product),
+or the Ines software installed if you are using the Ines GPIB interface
+products. Before installing Powerdroid, you should set the environment
+variables appropriately.
+
+Environment variables::
+
+    export COMPILE_GPIB=1
+    export USE_INES=1
+
+A 1 (true) value for COMPILE_GPIB means DO compile the wrapper using the
+library, a 0 (zero, or false) means don't compile the library. Set it to
+zero if you don't have any GPIB product installed on the machine that is
+being installed.
+
+A 1 value for USE_INES means compile gpib wrapper with Ines libraries
+(Ines driver and libraries must be installed).  A 0 means use linux-gpib
+libraries.
+
+Installation From Source
+************************
+
+Obtain the source tarball from the `FTP server`_.
+
+Powerdroid is ready to install using the Python distutils. Just run the
+following after unpacking the source distribution::
+
+    python setup.py build
+    sudo python setup.py install
+    python setup_testcases.py build
+    sudo python setup_testcases.py install
+
+Powerdroid Configuration
+*************************
+
+The Powerdroid non-relational database needs to be set up now.
+
+There is currently not an easy way to do this...
+
+
+Test It Out
+-----------
+
+Run in a command shell::
+
+    pdreport -h
+
+If that runs and prints some documentation you are probably good to go.
+
+
+.. _setuptools: http://peak.telecommunity.com/DevCenter/setuptools
+.. _`Pycopia project page`: http://code.google.com/p/pycopia/ 
+.. _`FTP server`: ftp://ftp.powerdroid.org/pub/python/
+
+

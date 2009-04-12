@@ -1,0 +1,194 @@
+#!/usr/bin/python2.4 -OO
+# -*- coding: us-ascii -*-
+# vim:ts=2:sw=2:softtabstop=0:tw=74:smarttab:expandtab
+#
+# Copyright 2006 The Android Open Source Project
+
+"""Modem watcher.
+
+A simple application that provides monitoring of a GSM modem and reacts to
+its unsolicited messages and displays call activity.
+
+It may also be controlled by single-key commands. 
+
+Example:
+
+pdmodem --modems.dialednumber=6502849239 --modems.autoanswer=True
+
+This overrides measurement context settings (which provide the default
+values) to set the dialed number and auto answer incoming calls.
+
+"""
+
+import sys
+import os
+
+from pycopia import asyncio
+from pycopia import tty
+from pycopia import getopt
+from pycopia import timelib
+from pycopia import scheduler
+
+from droid.measure import core as measurecore
+from droid.instruments import core
+
+
+HELP = """\r
+Commands you may use:\r
+  A - answer\r
+  D - dial\r
+  R - redial last caller\r
+  H - hangup\r
+  S - show state\r
+  I - show caller ID\r
+  T - show call time\r
+  Q - quit\r
+\r
+"""
+
+
+class InputHandler(asyncio.PollerInterface):
+  """Input handler for modem monitor application.
+
+  It sets the tty to raw mode. Uses the async poller to monitor input
+  events (keystrokes) and performs some action.
+
+  Args:
+    modem: A droid.instruments.modems.GSMModem (or subclass) instance.
+    number: the number as a string to use when dialing out. May be changed
+      later to the incoming callers number.
+  """
+
+  def __init__(self, modem, number):
+    self._modem = modem
+    self._number = number
+    self._fileno = sys.stdin.fileno()
+    tty.save_state(self._fileno)
+    tty.setraw(self._fileno)
+    sys.stdout.write(HELP)
+
+  def fileno(self):
+    return self._fileno
+
+  def readable(self):
+    return True
+
+  def read_handler(self):
+    c = os.read(self._fileno, 1)
+    c = c.upper()
+    sys.stdout.write(c + " ")
+    if c == "A":
+      self._modem.Answer()
+    elif c == "D":
+      sys.stdout.write("Dialing %s.\r\n" % (self._number,))
+      self._modem.Dial(self._number)
+    elif c == "S":
+      sys.stdout.write("%s\r\n" % self._modem.callstate)
+    elif c == "I":
+      sys.stdout.write("%s\r\n" % self._modem.callerid)
+    elif c == "R":
+      cid = self._modem.callerid
+      if cid:
+        self._number = cid.number
+        sys.stdout.write("Redialing %s.\r\n" % (self._number,))
+        self._modem.Dial(self._number)
+      else:
+        sys.stdout.write("Number not available.\r\n")
+    elif c == "T":
+      sys.stdout.write(str(self._modem.GetLastCallTime()))
+      sys.stdout.write(" seconds.\r\n")
+    elif c == "H":
+      self._modem.Hangup()
+    elif c == "Q":
+      sys.stdout.write("Quiting.\r\n")
+      raise KeyboardInterrupt
+    else:
+      sys.stdout.write(HELP)
+
+  def error_handler(self, ex, val, tb):
+    if ex is KeyboardInterrupt:
+      raise
+    sys.stderr.write("InputHandler error: %s (%s)\r\n" % (ex, val))
+
+
+def Hangup(modem):
+  sys.stdout.write("Hangup at %s after %s seconds.\r\n" % (
+      timelib.localtimestamp(), modem.lastcalltime))
+  if not modem.localhangup and modem.context.autoredial:
+    cid = modem.callerid
+    if cid:
+      number = cid.number
+      if modem.calls < modem.context.redialattempts:
+        sys.stdout.write("Auto-redialing %s.\r\n" % (number,))
+        scheduler.sleep(5) # TODO(dart) make it deferred
+        modem.Dial(number)
+      else:
+        sys.stdout.write("Not Auto-redialing. Max tries.\r\n")
+    else:
+      sys.stdout.write("Cannot redial, no CID.\r\n")
+
+def Answer(modem):
+  sys.stdout.write("Call answered at %s.\r\n" % (timelib.localtimestamp(),))
+
+def Call(modem):
+  sys.stdout.write("Call active at %s.\r\n" % (timelib.localtimestamp(),))
+
+def Ringing(modem):
+  sys.stdout.write("Ringing for %s call.\r\n" % modem.calltype)
+
+def Alerting(modem):
+  sys.stdout.write("Alerting.\r\n")
+
+
+def pdmodem(argv):
+  """
+  Interactive modem handler.
+  """
+  name = "modem"
+  try:
+    opts, longopts, args = getopt.getopt(argv[1:], "h?")
+  except getopt.GetoptError, err:
+    print >>sys.stderr, err
+    return
+
+  for opt, optarg in opts:
+    if opt in ("-h", "-?"):
+      print argv[0], "[-a N] [--modems.parm=value] ... [modemname]"
+      print """
+      Long options update the measurement context.
+      """
+      return
+
+  ctx = measurecore.MeasurementContext()
+  ctx.evalupdate(longopts)
+
+  if len(args) > 0:
+    name = args[0]
+
+  number = ctx.modems.dialednumber
+
+  modem = core.GetInstrument(name)
+  modem.Prepare(ctx)
+  modem.hanguphook = Hangup
+  modem.answerhook = Answer
+  modem.callhook = Call
+  modem.ringhook = Ringing
+  modem.alerthook = Alerting
+
+  inp = InputHandler(modem, number)
+
+  asyncio.poller.register(modem)
+  asyncio.poller.register(inp)
+  try:
+    try:
+      asyncio.poller.loop(-1)
+    finally:
+      asyncio.poller.unregister(modem)
+      asyncio.poller.unregister(inp)
+      modem.close()
+  except KeyboardInterrupt:
+    pass
+
+
+pdmodem(sys.argv)
+

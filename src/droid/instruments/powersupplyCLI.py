@@ -1,22 +1,8 @@
 #!/usr/bin/python2.4
 # -*- coding: us-ascii -*-
 # vim:ts=2:sw=2:softtabstop=0:tw=74:smarttab:expandtab
-
-# Copyright (C) 2008 The Android Open Source Project
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#      http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-
+# Copyright The Android Open Source Project
 
 """Command line interface for power supplies.
 """
@@ -45,7 +31,6 @@ class Ag66319D_CLI(PowerSupplyCLI):
     timelib.sleep(3)
     ps.charger_outputstate = "on"
 
-
   def usb(self, argv):
     """usb [on|off]
   Set the DUT's USB connection to on or off by controlling the charger
@@ -59,4 +44,13 @@ class Ag66319D_CLI(PowerSupplyCLI):
     else:
       self._print("USB OFF")
       return 1
+
+  def currentrange(self, argv):
+    """currentrange [high | medium | low | <float>]
+  Set the current detector range to given value.
+  Display current max value if no parameter supplied."""
+    if len(argv) > 1:
+      self._obj.SetCurrentRange(argv[1])
+    else:
+      self._print(self._obj.GetCurrentRange())
 
