@@ -279,7 +279,7 @@ static char gpib_ask__doc__[] =
 ""
 ;
 
-static PyObject* gpib_ask(PyObject *self, PyObject *args)
+static PyObject* gpib_fetch(PyObject *self, PyObject *args)
 {
 	char *command;
 	int command_len;
@@ -613,7 +613,7 @@ static struct PyMethodDef gpib_methods[] = {
  {"ibconfig",	gpib_ibconfig,	1,	gpib_ibconfig__doc__},
  {"read",	gpib_read,	1,	gpib_read__doc__},
  {"readbin",	gpib_readbin,	1,	gpib_readbin__doc__},
- {"ask",	gpib_ask,	1,	gpib_ask__doc__},
+ {"fetch",	gpib_fetch,	1,	gpib_ask__doc__},
  {"write",	gpib_write,	1,	gpib_write__doc__},
  {"writea",	gpib_writea,	1,	gpib_writea__doc__},
  {"writebin",	gpib_writebin,	1,	gpib_writebin__doc__},

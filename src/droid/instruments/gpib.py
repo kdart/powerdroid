@@ -256,8 +256,9 @@ class GpibInstrument(GpibDevice):
     """Sends a GET (group execute trigger) command to the device."""
     _gpib.trg(self._id)
 
-  def ask(self, string, length=65536):
-    return _gpib.ask(self._id, length, string)
+  def fetch(self, string, length=65536):
+    return _gpib.fetch(self._id, length, string)
+  ask = fetch # Deprecated method name, this is a alias that will eventually be removed.
 
   def send(self, string):
     _gpib.wait(self._id, CMPL)
@@ -275,14 +276,14 @@ class GpibInstrument(GpibDevice):
     return arr
 
   def identify(self):
-    return core.Identity(self.ask("*IDN?", 1024))
+    return core.Identity(self.fetch("*IDN?", 1024))
 
   def Reset(self):
     self.clear()
     self.write("*RST")
 
   def GetError(self):
-    errs = self.ask("SYST:ERR?", 4096)
+    errs = self.fetch("SYST:ERR?", 4096)
     code, string = errs.split(",", 1)
     return core.DeviceError(int(code), string.strip()[1:-1])
 
@@ -308,13 +309,13 @@ class GpibInstrument(GpibDevice):
     self.Errors()
 
   def Options(self):
-    return self.ask("*OPT?").split(",")
+    return self.fetch("*OPT?").split(",")
 
   def WaitToComplete(self):
     oto = self.timeout
     self.timeout = T300s
     try:
-      val = self.ask("*OPC?")
+      val = self.fetch("*OPC?")
     finally:
       self.timeout = oto
     return self.Errors()
@@ -323,12 +324,12 @@ class GpibInstrument(GpibDevice):
     self.write("*SRE %d" % int(val))
 
   def _get_SRE(self):
-    return int(self.ask("*SRE?"))
+    return int(self.fetch("*SRE?"))
 
   SRE = property(_get_SRE, _set_SRE)
 
   def _get_STB(self):
-    return int(self.ask("*STB?"))
+    return int(self.fetch("*STB?"))
 
   STB = property(_get_STB)
 
