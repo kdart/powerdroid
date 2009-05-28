@@ -1,0 +1,99 @@
+Frequently Asked Questions
+==========================
+
+Q:
+Could you please show me how to use your framework to scan two
+parameters, one fast and one slow, and read from a third instrument?
+just say two voltage supplies and read from a multimeter.
+
+
+A:
+Ok, first the good news. Once you have instrument interfaces and the
+environment object set up all you would have to do is this:
+
+  pdmeasure -t 1h voltage:fast:datafile=voltage1.dat \
+      voltage:30:datafile=voltage2.dat \
+      current:60:datafile=current.dat
+
+
+That command line means the following:
+
+Run a measurement for 1 hour duration, use the voltage measurer in fast
+mode, writing measurements to the file "voltage1.dat"; and also run
+another voltage measurer taking samples every 30 seconds writing samples
+to "voltage2.dat"; and also run the current measurer taking samples every 60
+seconds, writing to the file "current.dat".
+
+So, in this way you can specify arbitrarily complex measurement scenarios.
+
+Measurers currently defined are:
+
+  - meters
+    - voltage; measure voltage (usually with voltmeter)
+    - current; measure current (usually with ammeter)
+  - power supplies
+    - pscurrent: measure power source current draw
+    - psvoltage: measure power source voltage delivered
+    - pschargecurrent: measure alternate output (charger output) on some power supplies).
+
+
+Each of the data files also has a timestamp column so the measurements can
+be correlated later. There are also some reporting tools that can combine
+them into one summary or graph.
+
+The measurer names are actually aliases of Measurer objects defined in the
+Python module droid.measure.core. You may also specify the full path to
+any other measurer object.
+
+
+The bad news is that you surely don't have everything set up to do that
+just yet. First you would need an instrument object (subclass of
+instruments.core.Instrument or instruments.gpib.GpibInstrument) that
+defines at least the following methods:
+
+- voltage measurers need:
+  - GetVoltageHeadings
+  - MeasureDCVoltage
+- current measurers need:
+
+  - GetAllCurrentTextHeadings
+  - MeasureAllCurrentAsText 
+
+All instruments should alse define a Prepare method that takes a context
+object (sort of like a nested dictionary) that defines the measurement
+parameters or settings for the instrument. The default values are
+currently set in the MeasurementContext object in the
+src/droid/measure/core.py file. You may need to define a section for your
+instrument, and provide some default values. Some day this data will come
+from a database, but for now it is hard-coded. 
+
+The values defined there may be overridden when the "pdmeasure" tool is
+invoked by supplying long-style options. For example:
+
+  "--voltmeters.resolution=medium"
+
+You can look in the files src/droid/instruments/*.py for some examples of
+instruments that are already implemented. These objects provide the
+standard, abstract interface (method names) to any number of potential
+real instruments. The methods should perform the instrument specific
+functions to take the measurement and return a PhysicalQuantity object.
+
+
+The final step is to make the instrument available under a common
+(generic) name in the environment context. This is a part of the
+measurement context, but dynamically created. currently, you should edit
+the file src/droid/labmodel.py and add it as a property object. This
+environment object is a form of redirection so that measurers can be
+re-used in different "environments", with perhaps different sets of
+compatible instruments defined in it. This mapping will eventually be done
+at runtime from data taken from a database and command line, but for now
+it is hard-coded in the labmodel.py file.
+
+Since the framwork is modular it is possible to bypass any of the above
+steps and write some one-off script that invokes the RunSequencer function
+directly, or implement a new measurer. This is more involved. The
+description above describes how it is intended to work in the desired
+production code, and how one would "fit" new instruments and measurers
+into it in a "standard" way. 
+
+
