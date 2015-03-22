@@ -1,0 +1,1 @@
+Provides a set of modules and tools for Python developers to interface to electronic test equipment. This includes interfacing to instruments via the IEEE-488/GPIB, USBTMC, and RS-2332 interfaces.
